@@ -118,8 +118,9 @@ function Get-NewContent {
 
 function Find-BlockEvent {
     <# Codigo codex_error_info vigilado encontrado en $Text, o $null.
-       Por linea: solo si contiene "type":"event_msg" hace ConvertFrom-Json y
-       devuelve payload.error.codex_error_info si existe y esta en $WatchCodes.
+       Por linea: solo si casa "type"\s*:\s*"event_msg" (con o sin espacios
+       alrededor de los dos puntos) hace ConvertFrom-Json y devuelve
+       payload.error.codex_error_info si existe y esta en $WatchCodes.
        Exigir el campo real (no substring) evita el falso positivo de la cadena
        citada dentro de un input_text de usuario. #>
     param(
@@ -130,7 +131,7 @@ function Find-BlockEvent {
     if ([string]::IsNullOrEmpty($Text)) { return $null }
 
     foreach ($line in ($Text -split "`r?`n")) {
-        if (-not $line.Contains('"type":"event_msg"')) { continue }
+        if ($line -notmatch '"type"\s*:\s*"event_msg"') { continue }
         $obj = $null
         try { $obj = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
         $info = $obj.payload.error.codex_error_info
@@ -185,13 +186,20 @@ function Test-BurstAllowed {
 # --- Log ------------------------------------------------------------------------
 
 function Write-Log {
-    <# Append a log_file con timestamp ISO 8601. #>
+    <# Append a log_file con timestamp ISO 8601. Blindado (I1): si la escritura
+       falla (log bloqueado por antivirus/backup, ruta invalida), la excepcion
+       NO escapa ni mata al daemon — cae a Write-Warning. #>
     param([string]$Msg, [hashtable]$Cfg)
 
     $logFile = 'watchdog.log'
     if ($Cfg -and $Cfg['log_file']) { $logFile = [string]$Cfg['log_file'] }
     $line = '{0} {1}' -f (Get-Date).ToString('o'), $Msg
-    [System.IO.File]::AppendAllText($logFile, $line + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+    try {
+        [System.IO.File]::AppendAllText($logFile, $line + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+    }
+    catch {
+        try { Write-Warning ("log inaccesible '{0}': {1}" -f $logFile, $_.Exception.Message) } catch { }
+    }
 }
 
 # --- Inyeccion (Task 2): foreground, ventana, clipboard, SendKeys, toast ----------
@@ -300,6 +308,11 @@ function Invoke-Autorespond {
        SetForegroundWindow + polling hasta foreground_wait_s) -> si dry_run solo
        log DRYRUN; si no: clipboard backup -> Set-Clipboard -> ^v -> {ENTER} ->
        restaurar clipboard -> toast best-effort + log.
+       Devuelve el estado del intento (I2): 'SENT' (enviado), 'DRYRUN' (simulado),
+       'ABORT' (sin terminal en foreground tras la espera) o 'ERROR' (fallo de
+       clipboard/SendKeys). El toast y la linea AUTORESPOND solo aparecen en SENT;
+       un fallo real se registra como AUTORESPOND_FAILED. El llamador decide que
+       estados consumen cooldown/rafaga.
        $ForegroundProcName: override de testabilidad (T7b); vacio = foreground real. #>
     param(
         [string]$Text,
@@ -345,14 +358,14 @@ function Invoke-Autorespond {
 
         if (-not (Test-IsTerminalProcess $fgName $terms)) {
             Write-Log ("AUTORESPOND ABORT code={0} foreground={1} no es terminal tras {2}s" -f $Code, $fgName, $waitS) $Cfg
-            return
+            return 'ABORT'
         }
     }
 
     # 5) dry_run: nunca toca clipboard ni teclas
     if ([bool]$Cfg['dry_run']) {
         Write-Log ("DRYRUN code={0} texto={1} foreground={2}" -f $Code, $Text, $fgName) $Cfg
-        return
+        return 'DRYRUN'
     }
 
     # 6) clipboard backup (restaurar solo si habia contenido no vacio)
@@ -367,12 +380,14 @@ function Invoke-Autorespond {
     }
 
     # 7) pegar el texto y confirmar con Enter
+    $enviado = $false
     try {
         Set-Clipboard -Value $Text -ErrorAction Stop
         $shell = New-Object -ComObject WScript.Shell
         [void]$shell.SendKeys('^v')
         Start-Sleep -Milliseconds 300
         [void]$shell.SendKeys('{ENTER}')
+        $enviado = $true
     }
     catch {
         Write-Log ("ERROR inyeccion SendKeys: {0}" -f $_.Exception.Message) $Cfg
@@ -383,9 +398,16 @@ function Invoke-Autorespond {
         catch { Write-Log ("ERROR restaurando clipboard: {0}" -f $_.Exception.Message) $Cfg }
     }
 
-    # 8) toast best-effort + registro del disparo
-    Send-Toast 'Daybreak Watchdog' ("autorespond {0}" -f $Code)
-    Write-Log ("AUTORESPOND code={0} texto={1} foreground={2}" -f $Code, $Text, $fgName) $Cfg
+    # 8) toast y linea AUTORESPOND SOLO si el envio salio (senal de exito, I2):
+    #    un fallo de clipboard/SendKeys se registra como AUTORESPOND_FAILED para
+    #    que el usuario no confie en una inyeccion que nunca ocurrio.
+    if ($enviado) {
+        Send-Toast 'Daybreak Watchdog' ("autorespond {0}" -f $Code)
+        Write-Log ("AUTORESPOND code={0} texto={1} foreground={2}" -f $Code, $Text, $fgName) $Cfg
+        return 'SENT'
+    }
+    Write-Log ("AUTORESPOND_FAILED code={0} texto={1} foreground={2}" -f $Code, $Text, $fgName) $Cfg
+    return 'ERROR'
 }
 
 # --- Loop daemon (solo si no -NoDaemon) ---------------------------------------------
@@ -396,6 +418,22 @@ if (-not $NoDaemon) {
     $buffers  = @{}
     $history  = [System.Collections.Generic.List[datetime]]::new()
     $lastScan = Get-Date  # solo archivos tocados desde el arranque (no replay de historia vieja)
+
+    # C1: todo rollout YA existente al arrancar se inicializa con offset = su
+    # tamano actual ($buffers queda vacio para esas rutas). Sin esto, el primer
+    # append sobre un rollout preexistente se leia ENTERO desde byte 0 y cada
+    # evento vigilado de su historia se convertia en MATCH (pulsaciones reales
+    # por errores de hace dias). Solo los archivos creados despues del arranque
+    # se leen desde 0.
+    if (Test-Path -LiteralPath $cfg['sessions_dir']) {
+        Get-ChildItem -LiteralPath $cfg['sessions_dir'] -Recurse -File -Filter 'rollout-*.jsonl' -ErrorAction SilentlyContinue |
+            ForEach-Object { $offsets[[string]$_.FullName] = $_.Length }
+    }
+    else {
+        # M1: sessions_dir mal escrito = daemon zombie silencioso; dejar rastro una sola vez.
+        Write-Log ("WARNING sessions_dir no existe, no se vigila nada: {0}" -f $cfg['sessions_dir']) $cfg
+        Write-Warning ("sessions_dir no existe, no se vigila nada: {0}" -f $cfg['sessions_dir'])
+    }
 
     Write-Log ("daemon iniciado sessions_dir={0} watch_codes={1}" -f $cfg['sessions_dir'], ($cfg['watch_codes'] -join ',')) $cfg
 
@@ -427,10 +465,14 @@ if (-not $NoDaemon) {
                         $decision = Test-BurstAllowed (Get-Date) $history $cfg
                         $history = $decision.History
                         if ($decision.Allowed) {
-                            $history.Add((Get-Date))
                             $texto = $cfg['responses'][$code] ?? [string]$cfg['send_text']
                             Write-Log ("MATCH code={0} file={1} -> autorespond" -f $code, $file.Name) $cfg
-                            Invoke-Autorespond $texto $code $cfg
+                            $estado = Invoke-Autorespond $texto $code $cfg
+                            # I2: cooldown/rafaga solo consumen los estados que
+                            # representan un intento real de envio (SENT/DRYRUN/
+                            # ERROR; DRYRUN y ERROR cuentan a proposito). ABORT
+                            # no consumio nada: no ocupa sitio en la historia.
+                            if ($estado -ne 'ABORT') { $history.Add((Get-Date)) }
                         }
                         else {
                             Write-Log ("MATCH code={0} file={1} -> suprimido (cooldown/rafaga)" -f $code, $file.Name) $cfg

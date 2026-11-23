@@ -6,11 +6,15 @@
 # sesiones reales activas; si dry_run fallara al gatear, un test apuntado alli
 # enviaria teclas de verdad). Con dry_run=true el daemon solo puede loguear.
 #
-# Flujo: rollout fake vacio -> config temporal (dry_run, delay 0, sin foreground)
-# -> arrancar daemon como proceso -> esperar 2 s -> inyectar la linea event_msg
-# del spec (dos copias en un solo append: la 2a debe caer por cooldown) ->
+# Flujo: rollout fake vacio + rollout PRE-LLENADO con el evento ANTES del
+# arranque (regresion C1: su historia no debe disparar nada) -> config temporal
+# (dry_run, delay 0, sin foreground) -> arrancar daemon como proceso -> esperar
+# 2 s -> inyectar la linea event_msg del spec (dos copias en un solo append: la
+# 2a debe caer por cooldown) y appendear una linea inofensiva al pre-llenado ->
 # esperar 3 s -> matar por PID y confirmar muerte -> asserts del log:
-# MATCH + DRYRUN exactamente una vez + suprimido por cooldown + sin AUTORESPOND.
+# MATCH + DRYRUN exactamente una vez + suprimido por cooldown + sin AUTORESPOND
+# + el rollout pre-llenado sin ningun MATCH/DRYRUN por su historia (offsets al
+# arranque).
 
 $ErrorActionPreference = 'Stop'
 $script:Checks = 0
@@ -52,6 +56,11 @@ try {
     # rollout vacio, como una sesion recien abierta
     [System.IO.File]::WriteAllText($rollout, '', [System.Text.UTF8Encoding]::new($false))
 
+    # C1: rollout PRE-LLENADO con el evento ANTES de arrancar el daemon, como
+    # una sesion vieja que codex todavia appendea: su historia no debe disparar.
+    $rolloutHistorico = Join-Path $sessions 'rollout-historic.jsonl'
+    [System.IO.File]::WriteAllText($rolloutHistorico, $eventLine + "`n", [System.Text.UTF8Encoding]::new($false))
+
     # config temporal aislada: dry_run=true => nada de clipboard ni teclas
     $cfg = [ordered]@{
         sessions_dir                = $sessions
@@ -79,6 +88,12 @@ try {
     #    la 2a debe caer por cooldown -> DRYRUN una sola vez si el dedup funciona
     Add-Content -LiteralPath $rollout -Value @($eventLine, $eventLine) -Encoding utf8
 
+    # 3b) C1: append inofensivo (sin codigo vigilado) sobre el rollout pre-llenado.
+    #     El daemon solo debe leer este delta (su offset quedo fijado al arranque),
+    #     NUNCA la historia preexistente: sin MATCH ni DRYRUN por rollout-historic.
+    $latido = '{"type":"event_msg","payload":{"type":"user_message","content":[{"type":"input_text","text":"latido inofensivo"}]}}'
+    Add-Content -LiteralPath $rolloutHistorico -Value $latido -Encoding utf8
+
     # 4) espera 3 s (poll del daemon: 1 s; sobra para procesar)
     Start-Sleep -Seconds 3
 
@@ -100,6 +115,12 @@ try {
     Assert ($logText -match 'DRYRUN code=cyber_policy texto=/goal resume') 'DRYRUN registra codigo y respuesta'
     Assert ($logText -match [regex]::Escape('suprimido (cooldown/rafaga)')) 'segunda copia del evento suprimida por cooldown'
     Assert ($logText -notmatch 'AUTORESPOND code=') 'dry_run no envio nada real (sin AUTORESPOND en log)'
+
+    # C1: la historia del rollout pre-llenado ANTES del arranque no dispara nada
+    # (cuenta solo MATCH -> autorespond; "-> suprimido" es el dedup esperado)
+    $nAutorespond = ([regex]::Matches($logText, 'MATCH code=\S+ file=\S+ -> autorespond')).Count
+    Assert ($nAutorespond -eq 1) "unico MATCH -> autorespond, y del rollout nuevo (offsets al arranque, C1); hay $nAutorespond"
+    Assert ($logText -notmatch 'rollout-historic') 'el rollout pre-llenado no genera MATCH/DRYRUN por su historia (C1)'
 }
 finally {
     # garantia: ningun daemon temporal queda vivo, pase lo que pase

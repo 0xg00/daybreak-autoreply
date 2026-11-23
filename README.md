@@ -118,7 +118,11 @@ pwsh -NoProfile -File stop.ps1          # lista lo que detendría (no hace nada)
 pwsh -NoProfile -File stop.ps1 -Force   # lo detiene
 ```
 
-`stop.ps1` solo toca procesos cuyo comando apunta a `watch.ps1` (nunca mata
-por nombre de proceso a secas) y sale con código 1 si no hay nada que parar.
+`stop.ps1` solo toca procesos cuya línea de comando apunta al `watch.ps1` de
+esta carpeta: su ruta absoluta resuelta, o `watch.ps1` como palabra completa
+(para arranques relativos como `pwsh -File .\watch.ps1`). No casa nombres
+parecidos (`mywatch.ps1`, `watch.ps1.bak`) ni procesos que solo mencionen el
+archivo, y nunca mata por nombre de proceso a secas. Sale con código 1 si no
+hay nada que parar.
 Si el daemon corre en una ventana visible, también puedes pararlo cerrando
 esa ventana directamente.

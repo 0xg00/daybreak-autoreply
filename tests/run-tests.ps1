@@ -34,6 +34,9 @@ Assert ((Find-BlockEvent $usage) -eq 'usage_limit_exceeded') 'usage limit detect
 # T2 falso positivo: cadena citada dentro de input_text de user
 $fake = '{"type":"event_msg","payload":{"type":"user_message","content":[{"type":"input_text","text":"mira este codex_error_info\":\"cyber_policy citado"}]}}'
 Assert ($null -eq (Find-BlockEvent $fake)) 'cita en input_text no dispara'
+# T2b M2: el pre-filtro tolera espacios alrededor de los dos puntos
+$spaced = '{"type" : "event_msg","payload":{"type":"task_complete","error":{"message":"m","codex_error_info":"cyber_policy"}}}'
+Assert ((Find-BlockEvent $spaced) -eq 'cyber_policy') 'pre-filtro tolera espacios en "type" : "event_msg"'
 # T3 offsets dos archivos
 $offs = @{}; $d = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "wbtest-$(Get-Random)")
 $f1 = Join-Path $d 'rollout-a.jsonl'; $f2 = Join-Path $d 'rollout-b.jsonl'
@@ -93,10 +96,11 @@ $t7a = @{
     dry_run = $true; require_terminal_foreground = $false; delay_s = 0
     foreground_wait_s = 120; terminals = $terms; log_file = $tmplog2
 }
-Invoke-Autorespond 'PRUEBA' 'cyber_policy' $t7a
+$estadoA = Invoke-Autorespond 'PRUEBA' 'cyber_policy' $t7a
 $logA = Get-Content $tmplog2 -Raw
 Assert ($logA -match 'DRYRUN') 'T7a dry_run solo loguea DRYRUN'
 Assert ($logA -notmatch 'AUTORESPOND code=') 'T7a no envia teclas ni clipboard'
+Assert ($estadoA -eq 'DRYRUN') 'T7a estado devuelto DRYRUN (I2)'
 
 # T7b expiracion sin terminal: foreground ajeno (override -ForegroundProcName)
 # + foreground_wait_s=0 -> ABORT y no DRYRUN
@@ -105,10 +109,11 @@ $t7b = @{
     dry_run = $true; require_terminal_foreground = $true; delay_s = 0
     foreground_wait_s = 0; terminals = $terms; log_file = $tmplog3
 }
-Invoke-Autorespond 'PRUEBA' 'cyber_policy' $t7b -ForegroundProcName 'WINWORD'
+$estadoB = Invoke-Autorespond 'PRUEBA' 'cyber_policy' $t7b -ForegroundProcName 'WINWORD'
 $logB = Get-Content $tmplog3 -Raw
 Assert ($logB -match 'ABORT') 'T7b sin terminal tras espera -> ABORT'
 Assert ($logB -notmatch 'DRYRUN') 'T7b ABORT no llega a DRYRUN'
+Assert ($estadoB -eq 'ABORT') 'T7b estado devuelto ABORT (I2)'
 
 # Limpieza y resumen
 try { Remove-Item $d -Recurse -Force -ErrorAction Stop } catch { }
