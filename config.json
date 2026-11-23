@@ -29,5 +29,5 @@
     "wezterm-gui",
     "mintty"
   ],
-  "dry_run": true
+  "dry_run": false
 }
