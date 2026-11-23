@@ -1,0 +1,34 @@
+{
+  "sessions_dir": "C:\\Users\\Administrator\\.codex\\sessions",
+  "log_file": "watchdog.log",
+  "send_text": "/goal resume",
+  "responses": {
+    "cyber_policy": "/goal resume",
+    "usage_limit_exceeded": "/goal resume",
+    "context_window_exceeded": "/compact"
+  },
+  "watch_codes": [
+    "cyber_policy",
+    "usage_limit_exceeded",
+    "context_window_exceeded"
+  ],
+  "pattern": "\"codex_error_info\":\"cyber_policy",
+  "delay_s": 3,
+  "cooldown_s": 60,
+  "max_burst": 3,
+  "burst_window_min": 10,
+  "pause_after_limit_min": 15,
+  "require_terminal_foreground": true,
+  "terminals": [
+    "WindowsTerminal",
+    "conhost",
+    "cmd",
+    "powershell",
+    "pwsh",
+    "Code",
+    "alacritty",
+    "wezterm-gui",
+    "mintty"
+  ],
+  "dry_run": true
+}
