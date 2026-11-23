@@ -59,10 +59,11 @@ Si una clave falta o el archivo no existe, se usa el default de la tabla
 | `require_terminal_foreground` | `true` | Exigir que el proceso en primer plano sea un terminal antes de enviar; si no lo es, intenta traer la ventana del codex y espera. Con `false` envía sin comprobar nada. |
 | `foreground_wait_s` | `120` | Segundos que espera a que un terminal quede en primer plano antes de abortar (`ABORT` en el log, sin enviar). |
 | `terminals` | `WindowsTerminal`, `conhost`, `cmd`, `powershell`, `pwsh`, `Code`, `alacritty`, `wezterm-gui`, `mintty` | Procesos que cuentan como terminal válido para el chequeo de foreground. |
-| `dry_run` | `true` (en el repo) | `true`: solo loguea `DRYRUN code=… texto=…`, no toca portapapeles ni teclas. `false`: envía de verdad. |
+| `dry_run` | `false` (en el repo, listo para producción) | `true`: solo loguea `DRYRUN code=… texto=…`, no toca portapapeles ni teclas. `false`: envía de verdad. |
 
-> El repo se entrega con `dry_run: true`. Cámbialo a `false` solo cuando
-> quieras que el watchdog actúe de verdad.
+> El repo se entrega con `dry_run: false` (activo). Ponlo a `true` en la
+> config que uses para probar; el watch que corre de verdad debe llevarlo a
+> `false`. Nunca pruebes apuntando `sessions_dir` a tu `~/.codex/sessions` real.
 
 ## Cómo probar con `dry_run`
 
