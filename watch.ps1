@@ -1,4 +1,4 @@
-# Daybreak Watchdog - nucleo de deteccion (Task 1)
+# Daybreak Watchdog - nucleo de deteccion (Task 1) + inyeccion foreground-safe (Task 2)
 # Vigila los rollouts de Codex CLI (~/.codex/sessions/**/rollout-*.jsonl, JSONL
 # append en vivo) y detecta turnos muertos por errores estructurales
 # (payload.error.codex_error_info en watch_codes).
@@ -14,6 +14,8 @@ param(
 $script:OverlapChars = 256
 # Safety valve: si una linea nunca cierra (>64KB sin \n), recorta el tail al solape.
 $script:MaxTailChars = 65536
+# Terminales validos por defecto (compartido por Load-Config y Get-CodexParentTerminal).
+$script:DefaultTerminals = @('WindowsTerminal', 'conhost', 'cmd', 'powershell', 'pwsh', 'Code', 'alacritty', 'wezterm-gui', 'mintty')
 
 # --- Config ------------------------------------------------------------------
 
@@ -38,7 +40,8 @@ function Load-Config {
         burst_window_min            = 10
         pause_after_limit_min       = 15
         require_terminal_foreground = $true
-        terminals                   = @('WindowsTerminal', 'conhost', 'cmd', 'powershell', 'pwsh', 'Code', 'alacritty', 'wezterm-gui', 'mintty')
+        foreground_wait_s           = 120
+        terminals                   = $script:DefaultTerminals
         dry_run                     = $true
     }
 
@@ -191,13 +194,198 @@ function Write-Log {
     [System.IO.File]::AppendAllText($logFile, $line + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
 }
 
-# --- Autorespuesta (stub; Task 2 lo reemplaza por la inyeccion real) --------------
+# --- Inyeccion (Task 2): foreground, ventana, clipboard, SendKeys, toast ----------
+
+# P/Invoke minimo para la ventana en primer plano. El guard evita recompilar
+# el tipo si el script se dot-sourcea dos veces en la misma sesion.
+if (-not ('DaybreakWin32' -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class DaybreakWin32 {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+}
+"@
+}
+
+function Get-ForegroundProcessName {
+    <# Nombre (sin extension) del proceso dueno de la ventana en primer plano, o ''. #>
+    try {
+        $hwnd = [DaybreakWin32]::GetForegroundWindow()
+        if ($hwnd -eq [IntPtr]::Zero) { return '' }
+        $procId = [uint32]0
+        [void][DaybreakWin32]::GetWindowThreadProcessId($hwnd, [ref]$procId)
+        if ($procId -le 0) { return '' }
+        $p = Get-Process -Id $procId -ErrorAction Stop
+        return [System.IO.Path]::GetFileNameWithoutExtension($p.ProcessName)
+    }
+    catch { return '' }
+}
+
+function Test-IsTerminalProcess {
+    <# True si $ProcName (se ignora extension; case-insensitive) esta en $Terminals. #>
+    param([string]$ProcName, [string[]]$Terminals)
+
+    if ([string]::IsNullOrWhiteSpace($ProcName) -or $null -eq $Terminals -or $Terminals.Count -eq 0) { return $false }
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($ProcName.Trim())
+    foreach ($t in $Terminals) {
+        if ([string]::IsNullOrWhiteSpace($t)) { continue }
+        if ($name -eq [System.IO.Path]::GetFileNameWithoutExtension($t.Trim())) { return $true }
+    }
+    return $false
+}
+
+function Get-CodexParentTerminal {
+    <# HWND del primer ancestro-terminal de un proceso codex (nombre codex* o
+       node con 'codex' en su linea de comando), o [IntPtr]::Zero si no hay. #>
+    param([string[]]$Terminals = $script:DefaultTerminals)
+
+    $zero = [IntPtr]::Zero
+    try {
+        $procs = Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId, Name, CommandLine -ErrorAction Stop
+    }
+    catch { return $zero }
+
+    $byId = @{}
+    foreach ($p in $procs) { $byId[[int]$p.ProcessId] = $p }
+
+    $candidates = @($procs | Where-Object {
+        $n = [string]$_.Name
+        ($n -like 'codex*') -or (($n -like 'node*') -and ([string]$_.CommandLine -match 'codex'))
+    })
+
+    foreach ($cand in $candidates) {
+        $visited = @{}   # guard contra ciclos de ParentProcessId
+        $cur = $cand
+        while ($cur) {
+            $ppid = [int]$cur.ParentProcessId
+            if ($ppid -le 0 -or $visited.ContainsKey($ppid)) { break }
+            $visited[$ppid] = $true
+            $parent = $byId[$ppid]
+            if ($null -eq $parent) { break }
+            if (Test-IsTerminalProcess ([string]$parent.Name) $Terminals) {
+                try {
+                    $gp = Get-Process -Id $ppid -ErrorAction Stop
+                    if ($gp.MainWindowHandle -ne $zero) { return $gp.MainWindowHandle }
+                }
+                catch { }  # sin ventana/acceso: seguir subiendo
+            }
+            $cur = $parent
+        }
+    }
+    return $zero
+}
+
+function Send-Toast {
+    <# Toast best-effort via WinRT; cualquier fallo se ignora (el log ya registra el disparo). #>
+    param([string]$Title, [string]$Body)
+
+    try {
+        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+        $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+        $texts = $xml.GetElementsByTagName('text')
+        [void]$texts.Item(0).AppendChild($xml.CreateTextNode($Title))
+        [void]$texts.Item(1).AppendChild($xml.CreateTextNode($Body))
+        $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Daybreak Watchdog').Show($toast)
+    }
+    catch { }
+}
 
 function Invoke-Autorespond {
-    <# Stub Task 1: solo loguea. Firma (texto, codigo, cfg) para Task 2. #>
-    param([string]$Text, [string]$Code, [hashtable]$Cfg)
+    <# Inyeccion foreground-safe de la respuesta en el terminal del codex.
+       Orden: delay_s -> asegurar terminal en foreground (Get-CodexParentTerminal +
+       SetForegroundWindow + polling hasta foreground_wait_s) -> si dry_run solo
+       log DRYRUN; si no: clipboard backup -> Set-Clipboard -> ^v -> {ENTER} ->
+       restaurar clipboard -> toast best-effort + log.
+       $ForegroundProcName: override de testabilidad (T7b); vacio = foreground real. #>
+    param(
+        [string]$Text,
+        [string]$Code,
+        [hashtable]$Cfg,
+        [string]$ForegroundProcName = ''
+    )
 
-    Write-Log ("AUTORESPOND code={0} texto={1} dry_run={2} (stub Task 1)" -f $Code, $Text, [bool]$Cfg['dry_run']) $Cfg
+    # 1) delay inicial
+    $delayS = 3.0
+    if ($null -ne $Cfg['delay_s']) { $delayS = [double]$Cfg['delay_s'] }
+    if ($delayS -gt 0) { Start-Sleep -Seconds $delayS }
+
+    $terms = @()
+    if ($Cfg['terminals']) { $terms = @([string[]]$Cfg['terminals']) }
+
+    # 2) foreground: override de test o ventana real en primer plano
+    $fgName = if (-not [string]::IsNullOrEmpty($ForegroundProcName)) { $ForegroundProcName } else { Get-ForegroundProcessName }
+
+    $requireFg = [bool]$Cfg['require_terminal_foreground']
+    if ($requireFg -and -not (Test-IsTerminalProcess $fgName $terms)) {
+        # 3) intento de foco sobre el terminal padre del codex. Solo en modo real:
+        #    con override de test el foreground esta fijado y no se toca ninguna ventana.
+        if ([string]::IsNullOrEmpty($ForegroundProcName)) {
+            try {
+                $hwnd = Get-CodexParentTerminal $terms
+                if ($hwnd -ne [IntPtr]::Zero -and [DaybreakWin32]::SetForegroundWindow($hwnd)) {
+                    Start-Sleep -Milliseconds 250
+                    $fgName = Get-ForegroundProcessName
+                }
+            }
+            catch { }
+        }
+
+        # 4) polling del foreground hasta foreground_wait_s (por defecto 120)
+        $waitS = 120.0
+        if ($null -ne $Cfg['foreground_wait_s']) { $waitS = [double]$Cfg['foreground_wait_s'] }
+        $deadline = (Get-Date).AddSeconds($waitS)
+        while (-not (Test-IsTerminalProcess $fgName $terms) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 500
+            $fgName = Get-ForegroundProcessName
+        }
+
+        if (-not (Test-IsTerminalProcess $fgName $terms)) {
+            Write-Log ("AUTORESPOND ABORT code={0} foreground={1} no es terminal tras {2}s" -f $Code, $fgName, $waitS) $Cfg
+            return
+        }
+    }
+
+    # 5) dry_run: nunca toca clipboard ni teclas
+    if ([bool]$Cfg['dry_run']) {
+        Write-Log ("DRYRUN code={0} texto={1} foreground={2}" -f $Code, $Text, $fgName) $Cfg
+        return
+    }
+
+    # 6) clipboard backup (restaurar solo si habia contenido no vacio)
+    $prevClip = ''
+    $hadClip = $false
+    try {
+        $prev = Get-Clipboard -Raw -ErrorAction Stop
+        if (-not [string]::IsNullOrEmpty($prev)) { $prevClip = [string]$prev; $hadClip = $true }
+    }
+    catch {
+        Write-Log ("ERROR clipboard backup: {0}" -f $_.Exception.Message) $Cfg
+    }
+
+    # 7) pegar el texto y confirmar con Enter
+    try {
+        Set-Clipboard -Value $Text -ErrorAction Stop
+        $shell = New-Object -ComObject WScript.Shell
+        [void]$shell.SendKeys('^v')
+        Start-Sleep -Milliseconds 300
+        [void]$shell.SendKeys('{ENTER}')
+    }
+    catch {
+        Write-Log ("ERROR inyeccion SendKeys: {0}" -f $_.Exception.Message) $Cfg
+    }
+
+    if ($hadClip) {
+        try { Set-Clipboard -Value $prevClip -ErrorAction Stop }
+        catch { Write-Log ("ERROR restaurando clipboard: {0}" -f $_.Exception.Message) $Cfg }
+    }
+
+    # 8) toast best-effort + registro del disparo
+    Send-Toast 'Daybreak Watchdog' ("autorespond {0}" -f $Code)
+    Write-Log ("AUTORESPOND code={0} texto={1} foreground={2}" -f $Code, $Text, $fgName) $Cfg
 }
 
 # --- Loop daemon (solo si no -NoDaemon) ---------------------------------------------

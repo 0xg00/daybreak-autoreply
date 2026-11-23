@@ -77,8 +77,42 @@ Assert (($logLine -match '\d{4}-\d{2}-\d{2}T') -and ($logLine -match 'evento de 
 $h.Clear(); $h.Add((Get-Date).AddMinutes(-2))
 Assert ((Test-BurstAllowed (Get-Date) $h $cfg).Allowed) 'rafaga permite tras cooldown'
 
+# --- Task 2: inyeccion (foreground, ventana, clipboard, SendKeys, toast) -------
+
+# T6 no-terminal rechazado
+$terms = @('WindowsTerminal','conhost','cmd','powershell','pwsh','Code','alacritty','wezterm-gui','mintty')
+Assert (-not (Test-IsTerminalProcess 'WINWORD' $terms)) 'T6 Word no es terminal'
+Assert (Test-IsTerminalProcess 'WindowsTerminal' $terms) 'T6 WT si es terminal'
+Assert (Test-IsTerminalProcess 'Code' $terms) 'T6 VS Code si es terminal'
+Assert (Test-IsTerminalProcess 'pwsh.exe' $terms) 'T6 nombre sin extension hace match'
+
+# T7a dry_run no toca clipboard ni teclas: invocar con texto y verificar entrada de log
+$t2dir = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "wbtest2-$(Get-Random)")
+$tmplog2 = Join-Path $t2dir 'dryrun.log'
+$t7a = @{
+    dry_run = $true; require_terminal_foreground = $false; delay_s = 0
+    foreground_wait_s = 120; terminals = $terms; log_file = $tmplog2
+}
+Invoke-Autorespond 'PRUEBA' 'cyber_policy' $t7a
+$logA = Get-Content $tmplog2 -Raw
+Assert ($logA -match 'DRYRUN') 'T7a dry_run solo loguea DRYRUN'
+Assert ($logA -notmatch 'AUTORESPOND code=') 'T7a no envia teclas ni clipboard'
+
+# T7b expiracion sin terminal: foreground ajeno (override -ForegroundProcName)
+# + foreground_wait_s=0 -> ABORT y no DRYRUN
+$tmplog3 = Join-Path $t2dir 'abort.log'
+$t7b = @{
+    dry_run = $true; require_terminal_foreground = $true; delay_s = 0
+    foreground_wait_s = 0; terminals = $terms; log_file = $tmplog3
+}
+Invoke-Autorespond 'PRUEBA' 'cyber_policy' $t7b -ForegroundProcName 'WINWORD'
+$logB = Get-Content $tmplog3 -Raw
+Assert ($logB -match 'ABORT') 'T7b sin terminal tras espera -> ABORT'
+Assert ($logB -notmatch 'DRYRUN') 'T7b ABORT no llega a DRYRUN'
+
 # Limpieza y resumen
 try { Remove-Item $d -Recurse -Force -ErrorAction Stop } catch { }
+try { Remove-Item $t2dir -Recurse -Force -ErrorAction Stop } catch { }
 Write-Host "== Resultado: $($script:Checks - $script:Failures)/$script:Checks ok, $script:Failures fallos =="
 if ($script:Failures -gt 0) { exit 1 }
 exit 0
