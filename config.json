@@ -12,7 +12,6 @@
     "usage_limit_exceeded",
     "context_window_exceeded"
   ],
-  "pattern": "\"codex_error_info\":\"cyber_policy",
   "delay_s": 3,
   "cooldown_s": 60,
   "max_burst": 3,

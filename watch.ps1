@@ -212,6 +212,10 @@ if (-not $NoDaemon) {
     Write-Log ("daemon iniciado sessions_dir={0} watch_codes={1}" -f $cfg['sessions_dir'], ($cfg['watch_codes'] -join ',')) $cfg
 
     while ($true) {
+        # capturar el instante de escaneo ANTES de enumerar: los appends entre el
+        # snapshot y la actualizacion de lastScan quedan cubiertos en el proximo poll
+        # (los offsets hacen inofensiva la re-enumeracion)
+        $scanStart = Get-Date
         $files = @(Get-ChildItem -LiteralPath $cfg['sessions_dir'] -Recurse -File -Filter 'rollout-*.jsonl' -ErrorAction SilentlyContinue |
             Where-Object { $_.LastWriteTime -gt $lastScan })
 
@@ -258,7 +262,7 @@ if (-not $NoDaemon) {
             }
         }
 
-        $lastScan = Get-Date
+        $lastScan = $scanStart
         Start-Sleep -Seconds 1
     }
 }
