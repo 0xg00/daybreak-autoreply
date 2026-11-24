@@ -1,128 +1,88 @@
-# Daybreak Watchdog
+# daybreak-autoreply
 
-Daemon en PowerShell 7 que vigila los rollouts de sesión de Codex CLI
-(`~/.codex/sessions/**/rollout-*.jsonl`, append en vivo) y auto-responde los
-turnos muertos. Cuando Codex graba en el rollout un error estructural
-(`payload.error.codex_error_info`) con un código vigilado, el watchdog espera
-unos segundos, comprueba que un terminal esté en primer plano, pega la
-respuesta asociada a ese código en el portapapeles, la envía con Ctrl+V + Enter
-al terminal donde corre el codex y lo avisa con un toast.
+Plugin de Codex CLI que **responde automáticamente a los bloqueos de ciberseguridad** (el famoso "This content can't be shown… apply for Daybreak"). Cuando un turno muere por `cyber_policy`, el plugin envía solo el comando que configures — por defecto `/goal resume` — a la terminal donde corre Codex. Sin tocar el teclado.
 
-Respuestas por defecto:
+**Windows-only**: el motor usa SendKeys, portapapeles y CIM.
 
-| Código vigilado        | Respuesta inyectada |
-|------------------------|---------------------|
-| `cyber_policy`         | `/goal resume`      |
-| `usage_limit_exceeded` | `/goal resume`      |
-| `context_window_exceeded` | `/compact`       |
+## Cómo funciona
 
-Requisitos: Windows, PowerShell 7 (`pwsh`). Sin módulos externos; todo el
-comportamiento se ajusta desde `config.json`.
+1. Detecta el bloqueo leyendo los rollouts de sesión (`~/.codex/sessions/**/rollout-*.jsonl`, solo lectura) — el campo estructural `payload.error.codex_error_info`, no texto suelto. Latencia de detección: ~1-2 s.
+2. Tras `delay_s` (3 s por defecto), verifica que el foreground sea una terminal (lista configurable), activa la ventana de Codex si hace falta, pega tu texto por portapapeles (con backup y restauración) y pulsa Enter.
+3. Control de ráfaga: cooldown de 60 s, máximo 3 disparos por 10 min, pausa de 15 min tras agotar el límite.
 
-## Arranque manual
+Mapa por defecto (editable):
 
-```powershell
-cd C:\ruta\a\daybreak-watchdog
-pwsh -NoProfile -File watch.ps1
+| código | respuesta |
+|---|---|
+| `cyber_policy` | `/goal resume` |
+| `usage_limit_exceeded` | `/goal resume` |
+| `context_window_exceeded` | `/compact` |
+
+## Instalación
+
+1. Añade el marketplace a `~/.codex/config.toml` (repo publicado en GitHub; sustituye la URL por la tuya):
+
+```toml
+[marketplaces.daybreak]
+source_type = "git"
+source = "https://github.com/TU-USUARIO/daybreak-autoreply.git"
 ```
 
-Con otra config: `pwsh -NoProfile -File watch.ps1 -ConfigPath C:\ruta\otra-config.json`.
-Sin el loop daemon (solo funciones, para pruebas): añade `-NoDaemon`.
+Para desarrollo local: `source_type = "local"` y `source = '<ruta absoluta del repo>'`.
 
-### Versión minimizada / oculta (acceso directo)
+2. En Codex CLI: `/plugins` → pestaña del marketplace → **Install** `daybreak-autoreply`.
+3. `/hooks` → confía el hook `SessionStart` del plugin (una vez; Codex avisa al arranque si queda pendiente).
+4. Abre una sesión nueva. El hook arranca el daemon solo — no hay paso 5.
 
-Crea un acceso directo (.lnk) con:
+> ⚠️ **Activo por defecto**: `dry_run=false`. Instalar y abrir sesión = el watchdog queda armado y enviará el comando real en el próximo bloqueo. Si quieres probar sin teclas reales primero, edita `config.json` (ver abajo) y pon `"dry_run": true`, o ejecuta `/daybreak-test` que corre un sandbox aislado.
 
-- **Destino:** `C:\Program Files\PowerShell\7\pwsh.exe -NoProfile -WindowStyle Hidden -File "C:\ruta\a\daybreak-watchdog\watch.ps1"`
-- **Iniciar en:** la carpeta del proyecto (importante: así encuentra `config.json`;
-  si lo arrancas desde otra carpeta, pasa `-ConfigPath` con ruta absoluta).
+## Slash commands
 
-La ventana queda oculta; para pararlo en ese modo usa `stop.ps1` (abajo).
+| comando | qué hace |
+|---|---|
+| `/daybreak-status` | PID, uptime, config, últimos 5 disparos |
+| `/daybreak-test` | E2E sandbox (DRYRUN, sin teclas reales) |
+| `/daybreak-stop` | apagado **persistente** (sobrevive sesiones) |
+| `/daybreak-start` | reactiva y arranca |
 
-## config.json — todas las claves
+## Configuración
 
-Si una clave falta o el archivo no existe, se usa el default de la tabla
-(configuración parcial válida).
+El archivo vive en `~/.codex/plugin-data/daybreak-autoreply/config.json` (se crea la primera vez; editar y hacer `/daybreak-stop` + `/daybreak-start` para recargar).
 
-| Clave | Default | Qué hace |
+| clave | default | significado |
 |---|---|---|
-| `sessions_dir` | `%USERPROFILE%\.codex\sessions` | Carpeta raíz (búsqueda recursiva) donde vigilar `rollout-*.jsonl`. |
-| `log_file` | `watchdog.log` | Registro de arranques, `MATCH`, `DRYRUN`/`AUTORESPOND`, `ABORT` y errores. |
-| `send_text` | `/goal resume` | Respuesta por defecto si el código detectado no tiene entrada en `responses`. |
-| `responses` | `cyber_policy`→`/goal resume`, `usage_limit_exceeded`→`/goal resume`, `context_window_exceeded`→`/compact` | Mapa código→texto que se pega y envía en el terminal. |
-| `watch_codes` | `cyber_policy`, `usage_limit_exceeded`, `context_window_exceeded` | Códigos `codex_error_info` que disparan la auto-respuesta. |
-| `delay_s` | `3` | Segundos de espera tras detectar antes de tocar el terminal (margen para soltar el teclado). |
-| `cooldown_s` | `60` | Segundos mínimos entre disparos: dedup del mismo evento repetido. |
-| `max_burst` | `3` | Máximo de disparos dentro de `burst_window_min`. |
-| `burst_window_min` | `10` | Ventana de ráfaga en minutos. |
-| `pause_after_limit_min` | `15` | Pausa tras agotar la ráfaga (`max_burst` en la ventana) antes de volver a disparar. |
-| `require_terminal_foreground` | `true` | Exigir que el proceso en primer plano sea un terminal antes de enviar; si no lo es, intenta traer la ventana del codex y espera. Con `false` envía sin comprobar nada. |
-| `foreground_wait_s` | `120` | Segundos que espera a que un terminal quede en primer plano antes de abortar (`ABORT` en el log, sin enviar). |
-| `terminals` | `WindowsTerminal`, `conhost`, `cmd`, `powershell`, `pwsh`, `Code`, `alacritty`, `wezterm-gui`, `mintty` | Procesos que cuentan como terminal válido para el chequeo de foreground. |
-| `dry_run` | `true` (default de código si la clave falta) | `true`: solo loguea `DRYRUN code=… texto=…`, no toca portapapeles ni teclas. `false`: envía de verdad. |
+| `sessions_dir` | `~/.codex/sessions` | dónde vigilar rollouts |
+| `responses` | mapa de arriba | código → texto a enviar |
+| `watch_codes` | los tres | códigos que disparan |
+| `send_text` | `/goal resume` | fallback si el código no está en `responses` |
+| `delay_s` | `3` | espera tras detectar (deja renderizar el error) |
+| `cooldown_s` | `60` | mínimo entre disparos |
+| `max_burst` / `burst_window_min` | `3` / `10` | techo de disparos por ventana |
+| `pause_after_limit_min` | `15` | pausa tras agotar la ráfaga |
+| `require_terminal_foreground` | `true` | jamás teclear si el foco no es terminal |
+| `terminals` | 9 procesos | lista de terminales válidas (WT, conhost, cmd, powershell, pwsh, Code, alacritty, wezterm, mintty) |
+| `foreground_wait_s` | `120` | espera máx. a que el foco vuelva a terminal |
+| `dry_run` | `false` | `true` = solo loguear, no enviar |
+| `log_file` | `logs/watchdog.log` | relativo al dir de datos del plugin |
 
-> El repo se entrega con `dry_run: false` (activo). Ponlo a `true` en la
-> config que uses para probar; el watch que corre de verdad debe llevarlo a
-> `false`. Nunca pruebes apuntando `sessions_dir` a tu `~/.codex/sessions` real.
+## Actualizar
 
-## Cómo probar con `dry_run`
-
-`dry_run` hace todo el recorrido (detección, delay, gates) pero en lugar de
-pegar/enviar escribe en el log una línea `DRYRUN`. Para probarlo necesitas un
-rollout que el daemon vea. Lo limpio es un `sessions_dir` temporal **aislado**
-(nunca apuntes una config de prueba a tu `~/.codex/sessions` real: ahí hay
-sesiones activas y un fallo del gate enviaría teclas de verdad):
-
-```powershell
-# 1) config temporal de prueba
-$t = "$env:TEMP\daybreak-prueba"
-New-Item -ItemType Directory "$t\sessions\2026\11\23" -Force | Out-Null
-@{ sessions_dir = "$t\sessions"; log_file = "$t\watchdog.log";
-   dry_run = $true; delay_s = 0; require_terminal_foreground = $false } |
-  ConvertTo-Json | Set-Content "$t\config.json"
-
-# 2) arrancar el daemon apuntando a esa config
-pwsh -NoProfile -File watch.ps1 -ConfigPath "$t\config.json"
-
-# 3) en otra terminal, fabricar el rollout fake: append de la línea event_msg del spec
-Add-Content "$t\sessions\2026\11\23\rollout-test.jsonl" `
-  '{"type":"event_msg","payload":{"type":"task_complete","error":{"message":"Daybreak","codex_error_info":"cyber_policy"}}}'
-
-# 4) comprobar el log: debe aparecer MATCH + una linea DRYRUN (una sola vez por cooldown)
-Get-Content "$t\watchdog.log" -Tail 5
-```
-
-O directamente, automatizado: `pwsh -File tests/e2e-dryrun.ps1` (levanta el
-daemon real contra un temporal aislado, inyecta la línea y verifica el log).
-La suite unitaria completa va aparte: `pwsh -File tests/run-tests.ps1`.
+`/plugins` → reinstall/update. El hook cambia de hash → `/hooks` → re-confiar (Codex avisa al arranque). El daemon viejo se detecta y reemplaza solo (saneo por ruta en `state.json`).
 
 ## Límites conocidos
 
-- **Multi-pestaña en Windows Terminal:** se activa la *ventana* de WT, no la
-  *pestaña* concreta donde vive el codex. Si el codex no está en la pestaña
-  activa, el texto puede ir a la pestaña que esté visible.
-- **Colisión con tu escritura:** si estás escribiendo tú en esa terminal
-  exacta en el momento del envío, tu texto y el pegado pueden entremezclarse.
-  `delay_s` (3 s por defecto) da un margen, pero no evita la colisión si
-  escribes justo durante el pegado.
-- **Toast:** puede no hacer nada (no-op) en PowerShell 7.4+ (WinRT
-  best-effort). El disparo queda registrado en el log de todos modos.
-- **Terminal no listada:** si el codex corre en un proceso que no está en
-  `terminals`, el watchdog nunca envía (lo aborta con `ABORT` en el log tras
-  `foreground_wait_s`).
+- **Multi-pestaña en Windows Terminal**: SendKeys va a la ventana con foco; con varias abiertas puede caer en otra (mitigado por el gate de foreground + cooldown).
+- **Colisión con tu escritura**: hay una ventana de ~500 ms de pegado+Enter en la que no debes teclear.
+- **Toast**: requiere PowerShell 7.4+ (best-effort, sin toast todo lo demás funciona).
+- Depende del formato interno de rollouts de Codex; si OpenAI lo cambia, hay que adaptar el parser.
 
-## Cómo parar
+## Desarrollo
 
 ```powershell
-pwsh -NoProfile -File stop.ps1          # lista lo que detendría (no hace nada)
-pwsh -NoProfile -File stop.ps1 -Force   # lo detiene
+pwsh -File tests/run-tests.ps1            # 46 asserts unit
+pwsh -File tests/e2e-plugin.ps1           # E2E integración (sandbox)
+pwsh -File tests/e2e-dryrun.ps1           # E2E motor (sandbox)
+pwsh -File tests/test-plugin-structure.ps1 # estructura del plugin
 ```
 
-`stop.ps1` solo toca procesos cuya línea de comando apunta al `watch.ps1` de
-esta carpeta: su ruta absoluta resuelta, o `watch.ps1` como palabra completa
-(para arranques relativos como `pwsh -File .\watch.ps1`). No casa nombres
-parecidos (`mywatch.ps1`, `watch.ps1.bak`) ni procesos que solo mencionen el
-archivo, y nunca mata por nombre de proceso a secas. Sale con código 1 si no
-hay nada que parar.
-Si el daemon corre en una ventana visible, también puedes pararlo cerrando
-esa ventana directamente.
+Licencia MIT.

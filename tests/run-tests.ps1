@@ -198,6 +198,35 @@ $cfgT13b = Load-Config $c1
 Assert ($cfgT13b.log_file -eq $absLog) 'T13b log_file absoluto se respeta'
 try { Remove-Item $t13dir -Recurse -Force -ErrorAction Stop } catch { }
 
+# T14 CLI (Task 5)
+$cliPath = (Resolve-Path (Join-Path $PSScriptRoot '..\scripts\daybreak-cli.ps1' -ErrorAction SilentlyContinue)).Path
+if (-not $cliPath) { $cliPath = Join-Path $PSScriptRoot '..\scripts\daybreak-cli.ps1' }
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$t14dir = Join-Path $env:TEMP "t14-$(Get-Random)"; [void](New-Item -ItemType Directory -Force $t14dir)
+# config sandbox PRE-creado para que 'start' nunca toque sessions reales
+$t14sess = Join-Path $t14dir 'sess'; [void](New-Item -ItemType Directory -Force $t14sess)
+[System.IO.File]::WriteAllText((Join-Path $t14dir 'config.json'), (@{ sessions_dir = $t14sess; dry_run = $true; delay_s = 0; require_terminal_foreground = $false; log_file = 'logs/watchdog.log' } | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+
+$stOut = pwsh -NoProfile -File $cliPath status -DataDir $t14dir -PluginRoot $repoRoot
+Assert ("$stOut" -match 'NOT RUNNING') 'T14a status sin daemon -> NOT RUNNING'
+Assert ($LASTEXITCODE -eq 0) 'T14b status exit 0'
+
+$null = pwsh -NoProfile -File $cliPath stop -DataDir $t14dir -PluginRoot $repoRoot
+Assert (Test-Path (Join-Path $t14dir 'disabled.flag')) 'T14c stop crea disabled.flag'
+Assert ($LASTEXITCODE -eq 0) 'T14d stop exit 0 sin daemon'
+
+$null = pwsh -NoProfile -File $cliPath start -DataDir $t14dir -PluginRoot $repoRoot
+Start-Sleep -Milliseconds 900
+Assert (-not (Test-Path (Join-Path $t14dir 'disabled.flag'))) 'T14e start quita disabled.flag'
+Assert (Test-Path (Join-Path $t14dir 'state.json')) 'T14f start arranca daemon (state.json)'
+$t14state = Get-Content (Join-Path $t14dir 'state.json') -Raw | ConvertFrom-Json
+Stop-Process -Id ([int]$t14state.pid) -Force -ErrorAction SilentlyContinue
+
+$helpOut = pwsh -NoProfile -File $cliPath
+Assert ("$helpOut" -match 'test') 'T14g usage documenta subcomando test'
+Assert ($LASTEXITCODE -eq 0) 'T14h sin args exit 0 (usage)'
+try { Remove-Item $t14dir -Recurse -Force -ErrorAction Stop } catch { }
+
 try { Remove-Item $edDir -Recurse -Force -ErrorAction Stop } catch { }
 
 # Limpieza y resumen

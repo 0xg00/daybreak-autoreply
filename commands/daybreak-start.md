@@ -6,4 +6,4 @@ allowed-tools: Bash(pwsh:*)
 
 !`pwsh -NoProfile -File "${CLAUDE_PLUGIN_ROOT}/scripts/daybreak-cli.ps1" start`
 
-Stub Task 2 — se completa en Task 5.
+Muestra la salida del CLI tal cual (línea RUNNING con PID). Si no aparece RUNNING, sugiere ejecutar `/daybreak-status` para diagnóstico.
