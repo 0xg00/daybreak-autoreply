@@ -1,30 +1,34 @@
-# Bitácora E2E real — plugin daybreak-autoreply (2026-11-24)
+# Real-world E2E log — daybreak-autoreply plugin (2026-11-24)
 
-Verificación en producción sobre sesiones reales del socio (sin sandbox).
+Production verification against the partner's real sessions (no sandbox).
 
-## Instalación dev (CLI, sin TUI)
+## Dev install (CLI, no TUI)
 
-- `/plugins` vacío con marketplace local → causa: los marketplaces locales exigen manifiesto raíz. Creado `.agents/plugins/marketplace.json` (esquema copiado de `openai-bundled`).
-- `codex plugin add daybreak-autoreply@daybreak-dev` → cache `~/.codex/plugins/cache/daybreak-dev/daybreak-autoreply/0.1.0` + registro en config.toml línea `[plugins."daybreak-autoreply@daybreak-dev"]`.
+- `/plugins` empty with a local marketplace → cause: local marketplaces require a root manifest. Created `.agents/plugins/marketplace.json` (schema copied from `openai-bundled`).
+- `codex plugin add daybreak-autoreply@daybreak-dev` → cache at `~/.codex/plugins/cache/daybreak-dev/daybreak-autoreply/0.1.0` + a `[plugins."daybreak-autoreply@daybreak-dev"]` entry in config.toml.
 
-## Motor v1 (SendKeys)
+## Engine v1 (SendKeys)
 
-- Daemon levantado simulando el hook (env `CLAUDE_PLUGIN_ROOT/DATA` + `ensure-daemon.ps1`).
-- 2 envíos reales verificados: `AUTORESPOND … 19:50:03` y `19:51:10` (foreground=WindowsTerminal).
-- Feedback del socio: cooldown/ráfaga (60 s, 3/10 min) suprimía su bucle bloqueo→resume; teclas iban a la ventana con foco, no a la sesión bloqueada.
+- Daemon started by simulating the hook (env `CLAUDE_PLUGIN_ROOT/DATA` + `ensure-daemon.ps1`).
+- 2 real sends verified: `AUTORESPOND … 19:50:03` and `19:51:10` (foreground=WindowsTerminal).
+- Partner feedback: the 60 s / 3-per-10-min cooldown+burst suppressed their block→retry loop; keys went to the focused window, not the blocked session.
 
-## Motor v2 (codex queue) — verificado extremo a extremo
+## Engine v2 (codex queue) — verified end to end
 
-- `QUEUE_SENT` reales: 19:58:31, 19:58:46, 19:58:55 (thread 01a208d7… y 01a20ec8…), con message-id devuelto por codex.
-- Entrega confirmada EN el rollout destino: items `/goal resume` aparecen en `rollout-…01a208d7-fd7f…jsonl` a las 18:58:59–18:59:16Z (19:58–19:59 local), tras los QUEUE_SENT.
-- Subagentes rechazan el encolado (-32600) y el motor salta al siguiente UUID del nombre — observado y manejado.
-- `--resume` advierte "start a local daemon" (warning a log, no fallo): con el TUI abierto la entrega ocurre igual.
+- Real `QUEUE_SENT`: 19:58:31, 19:58:46, 19:58:55 (threads 01a208d7… and 01a20ec8…), with the message id returned by codex.
+- Delivery confirmed INSIDE the target rollout: `/goal resume` items appear in `rollout-…01a208d7-fd7f…jsonl` at 18:58:59–18:59:16Z (19:58–19:59 local), right after the QUEUE_SENTs.
+- Subagents reject queuing (-32600) and the engine skips to the next UUID in the filename — observed and handled.
+- `--resume` warned "start a local daemon" (logged warning, not a failure): with the TUI open, delivery happens anyway. (--resume was later removed entirely after a tab-focus-stealing report.)
 
-## Ritmo y texto (peticiones del socio)
+## Rate and text (partner requests)
 
-- cooldown 5 s + válvula 50/10 min (anti-bucle desbocado): MATCH→QUEUE_SENT cada bloque, supresión solo dentro de la ventana de 5 s (visible en log 19:58:59).
-- Texto cambiado a `continua` (cyber_policy, usage_limit_exceeded, send_text; `/compact` se mantiene para context_window_exceeded). Daemon reiniciado pid 21592 con el mapa nuevo a las 20:00:51.
+- cooldown 5 s + a 50/10-min valve initially; then 0/0 (unlimited) at the partner's explicit request (MATCH→QUEUE_SENT on every block, suppression only inside the window).
+- Reply text changed to `continua` (send_text + cyber_policy + usage_limit_exceeded; `/compact` kept for context_window_exceeded). Later: factory default `continue`, the partner keeps `continua` locally, and `/daybreak-set <text>` changes it live.
 
-## Pendiente del socio (no bloquea el funcionamiento)
+## Incident 20:03-20:08
 
-- Confiar el hook SessionStart del plugin vía `/hooks` en la próxima sesión → autostart tras reinicios de máquina (el daemon vivo ya sobrevive a todo lo demás: veredicto A del spike).
+With cooldown/burst at 0, SUBAGENT rollouts (single-UUID, rejected by `codex queue` with -32600) fell back to SendKeys 51 times → `continua` typed into unrelated windows/tabs (including another of the partner's sessions). Fixes: `sendkeys_fallback=false` by default (queue mode NEVER types outside the session), queue without `--resume`, per-thread loop breaker. The partner later disabled the breaker locally (`per_thread_max=0`) after it paused their fast-looping session — their explicit choice, documented in the README.
+
+## Still pending from the partner (does not block operation)
+
+- Trusting the plugin's SessionStart hook via `/hooks` in a new session → autostart after machine reboots (the live daemon already survives everything else: spike verdict A).

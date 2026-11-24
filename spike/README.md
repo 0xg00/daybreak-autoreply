@@ -1,23 +1,23 @@
-# Spikes de investigación — evidencia que fijó decisiones de diseño
+# Research spikes — evidence that fixed design decisions
 
-## spike 1 (stop-logger.ps1): ¿dispara el hook Stop en turnos muertos?
+## Spike 1 (stop-logger.ps1): does the Stop hook fire on turns killed by errors?
 
-NO. Matriz medida el 2026-11-24 con hook log-only:
+NO. Matrix measured on 2026-11-24 with a log-only hook:
 
-| evento | dispara |
+| event | fires? |
 |---|---|
-| SessionStart (startup/resume) | sí |
-| Stop tras turno normal | sí |
-| Stop tras turno con error cyber_policy | **NO** (2 bloques reales, cero entregas) |
+| SessionStart (startup/resume) | yes |
+| Stop after a normal turn | yes |
+| Stop after a turn killed by a cyber_policy error | **NO** (2 real blocks, zero deliveries) |
 
-Consecuencia: la inyección 100 % nativa (`decision:"block"` + reason) está descartada; el motor SendKeys es necesario.
+Consequence: the fully-native injection path (`decision:"block"` + reason) is discarded; the SendKeys engine was necessary at that point.
 
-## spike 2 (spawn-spike.ps1 + heartbeat.ps1): ¿sobrevive un hijo detached a la muerte del proceso codex?
+## Spike 2 (spawn-spike.ps1 + heartbeat.ps1): does a detached child survive the death of the codex process?
 
-SÍ (VEREDICTO A, mecanismo `Start-Process -WindowStyle Hidden`):
-- Hijo latiendo 29+ min con pid único y gap máx 2 s (sobrevive al exit del hook).
-- `codex exec` efímero (exit 0, proceso muerto) dejó un hijo que siguió latiendo → no existe job-object kill-on-close.
+YES (verdict A, `Start-Process -WindowStyle Hidden` mechanism):
+- Child beating for 29+ min with a single pid and a max 2 s gap (outlives the hook's exit).
+- An ephemeral `codex exec` (exit 0, process gone) left a child that kept beating → no job-object kill-on-close exists.
 
-Consecuencia: `ensure-daemon.ps1` puede lanzar el daemon desde el hook SessionStart con Start-Process directo; no hace falta tarea programada.
+Consequence: `ensure-daemon.ps1` can launch the daemon from the SessionStart hook with a plain Start-Process; no scheduled task needed.
 
-Lección adicional: los comandos de hook en Windows con rutas entrecomilladas con espacios al inicio fallan el spawn de forma silenciosa; `${CLAUDE_PLUGIN_ROOT}` (sin espacios) + pwsh funciona.
+Additional lesson: Windows hook commands with quoted paths containing spaces fail the spawn silently; `${CLAUDE_PLUGIN_ROOT}` (no spaces) + pwsh works.
