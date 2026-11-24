@@ -7,7 +7,7 @@ Codex CLI plugin that **auto-replies to cybersecurity policy blocks** (the infam
 ## Install
 
 ```
-codex plugin marketplace add https://github.com/YOUR-USER/daybreak-autoreply.git
+codex plugin marketplace add https://github.com/0xg00/daybreak-autoreply.git
 codex plugin add daybreak-autoreply
 ```
 
