@@ -74,7 +74,7 @@ try {
     [System.IO.File]::WriteAllText($cfgPath, ($cfg | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
 
     # 1) arrancar el daemon como proceso independiente, salida redirigida
-    $watch = (Resolve-Path (Join-Path $PSScriptRoot '..\watch.ps1')).Path
+    $watch = (Resolve-Path (Join-Path $PSScriptRoot '..\scripts\watch.ps1')).Path
     $daemonArgs = '-NoProfile -NoLogo -File "{0}" -ConfigPath "{1}"' -f $watch, $cfgPath
     $proc = Start-Process -FilePath 'pwsh' -ArgumentList $daemonArgs -WindowStyle Hidden `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru

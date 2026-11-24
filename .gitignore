@@ -2,3 +2,7 @@ watchdog.log
 .superpowers/
 spike/stop-payloads.log
 spike/stop-payloads.log.old
+spike/heartbeat.log
+spike/spike-child.pid
+spike/stop-heartbeat.flag
+spike/hook-fired.log

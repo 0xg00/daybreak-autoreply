@@ -1,0 +1,16 @@
+{
+  "name": "daybreak-autoreply",
+  "version": "0.1.0",
+  "description": "Auto-responde a los bloqueos de Codex CLI (cyber_policy / Daybreak, usage_limit_exceeded, context_window_exceeded) enviando el comando que configures (por defecto /goal resume) a la terminal con foco. Windows-only: usa SendKeys y CIM.",
+  "author": {
+    "name": "Administrator"
+  },
+  "license": "MIT",
+  "keywords": [
+    "daybreak",
+    "cyber_policy",
+    "autoreply",
+    "watchdog",
+    "windows"
+  ]
+}

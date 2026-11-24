@@ -18,7 +18,7 @@ function Assert($cond, $name) {
 }
 
 # Dot-source del nucleo, sin arrancar el loop daemon
-$watchPath = Join-Path $PSScriptRoot '..\watch.ps1'
+$watchPath = Join-Path $PSScriptRoot '..\scripts\watch.ps1'
 . $watchPath -NoDaemon
 
 Write-Host "== Task 1: nucleo de deteccion =="
