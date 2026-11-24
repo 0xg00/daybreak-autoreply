@@ -8,7 +8,7 @@ Plugin de Codex CLI que **responde automáticamente a los bloqueos de cibersegur
 
 1. Detecta el bloqueo leyendo los rollouts de sesión (`~/.codex/sessions/**/rollout-*.jsonl`, solo lectura) — el campo estructural `payload.error.codex_error_info`, no texto suelto. Latencia de detección: ~1-2 s.
 2. Tras `delay_s` (3 s por defecto), inyecta tu texto **en la sesión bloqueada exacta** con `codex queue --thread <uuid> --message <texto> --resume`: sin teclado, sin robar foco, funciona con el codex en cualquier pestaña y tú en cualquier aplicación. UUIDs de subagentes que rechazan el encolado se saltan solos; si ninguno entra, cae al modo legacy SendKeys (foreground-safe).
-3. Control de ritmo: cooldown de 5 s y válvula anti-bucle (50 disparos / 10 min, pausa de 15 min tras agotarla).
+3. Sin límites de ritmo por defecto: cada bloque recibe su respuesta (cooldown y burst en `0` = ilimitados; pon valores > 0 si quieres una válvula anti-bucle).
 
 Mapa por defecto (editable):
 
@@ -56,9 +56,9 @@ El archivo vive en `~/.codex/plugin-data/daybreak-autoreply/config.json` (se cre
 | `watch_codes` | los tres | códigos que disparan |
 | `send_text` | `/goal resume` | fallback si el código no está en `responses` |
 | `delivery` | `queue` | `queue` = inyecta en LA sesión vía `codex queue` (sin teclado ni foco); `sendkeys` = modo legacy con gates de foreground |
-| `delay_s` | `3` | espera tras detectar (deja renderizar el error) |
-| `cooldown_s` | `5` | mínimo entre disparos |
-| `max_burst` / `burst_window_min` | `50` / `10` | válvula anti-bucle desbocado (no control de spam) |
+| `delay_s` | `3` | espera tras detectar (bloques que caen dentro se envían igual) |
+| `cooldown_s` | `0` | mínimo entre disparos (`0` = sin cooldown) |
+| `max_burst` / `burst_window_min` | `0` / `10` | `0` = sin máximo (válvula opcional anti-bucle desbocado) |
 | `pause_after_limit_min` | `15` | pausa tras agotar la ráfaga |
 | `require_terminal_foreground` | `true` | jamás teclear si el foco no es terminal |
 | `terminals` | 9 procesos | lista de terminales válidas (WT, conhost, cmd, powershell, pwsh, Code, alacritty, wezterm, mintty) |
