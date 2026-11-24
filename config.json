@@ -1,6 +1,6 @@
 {
   "sessions_dir": "C:\\Users\\Administrator\\.codex\\sessions",
-  "log_file": "watchdog.log",
+  "log_file": "logs/watchdog.log",
   "send_text": "/goal resume",
   "responses": {
     "cyber_policy": "/goal resume",

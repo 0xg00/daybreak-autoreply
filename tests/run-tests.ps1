@@ -186,6 +186,18 @@ $bad = 'Z:\no\existe\ed-' + (Get-Random)
 $proc12 = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $ensurePath, '-DataDir', $bad) -Wait -PassThru -WindowStyle Hidden
 Assert ($proc12.ExitCode -eq 0) 'T12 DataDir imposible termina exit 0'
 
+# T13 log_file relativo se resuelve junto al config; absoluto se respeta
+$t13dir = Join-Path $env:TEMP "t13-$(Get-Random)"; [void](New-Item -ItemType Directory -Force $t13dir)
+$c1 = Join-Path $t13dir 'config.json'
+[System.IO.File]::WriteAllText($c1, (@{ log_file = 'wd.log'; sessions_dir = $t13dir } | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+$cfgT13 = Load-Config $c1
+Assert ($cfgT13.log_file -eq (Join-Path $t13dir 'wd.log')) 'T13a log_file relativo -> junto al config'
+$absLog = Join-Path $t13dir 'abs.log'
+[System.IO.File]::WriteAllText($c1, (@{ log_file = $absLog; sessions_dir = $t13dir } | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+$cfgT13b = Load-Config $c1
+Assert ($cfgT13b.log_file -eq $absLog) 'T13b log_file absoluto se respeta'
+try { Remove-Item $t13dir -Recurse -Force -ErrorAction Stop } catch { }
+
 try { Remove-Item $edDir -Recurse -Force -ErrorAction Stop } catch { }
 
 # Limpieza y resumen

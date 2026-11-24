@@ -66,6 +66,11 @@ function Load-Config {
         $cfg['responses'] = $resp
     }
 
+    # log_file relativo -> junto al config (PLUGIN_DATA), no al CWD del daemon
+    if ($cfg['log_file'] -and $cfg['log_file'] -notmatch '^[A-Za-z]:[\\/]' -and $cfg['log_file'] -notmatch '^\\\\') {
+        $cfg['log_file'] = Join-Path (Split-Path -Parent $Path) $cfg['log_file']
+    }
+
     return $cfg
 }
 
