@@ -111,6 +111,19 @@ El check independiente (2026-11-24) planteó 6 puntos; ninguno queda abierto:
 5. **¿`/daybreak-stop` es temporal o persistente?** **Call**: persistente — escribe flag `disabled` en `PLUGIN_DATA` que `ensure-daemon.ps1` respeta; `/daybreak-start` lo quita. Sin flag, matar el proceso solo pararía hasta la próxima sesión ( experiencia "inmortal" confusa).
 6. **¿Trust de hooks tras update?** **Resuelto por docs oficiales**: el trust se registra por hash → hooks cambiados quedan en revisión y se saltan con aviso al arranque hasta re-confiar vía `/hooks`. El README lo documenta en la sección de actualizaciones; el saneo "ruta cambió" de ensure-daemon cubre el daemon viejo huérfano.
 
+## Adenda v0.2 (2026-11-24, tras E2E real): entrega por `codex queue`
+
+Feedback del socio con el daemon en producción: (a) el cooldown/ráfaga suprimía respuestas de su sesión moribunda que bloquea cada pocos segundos — quiere respuesta SIEMPRE; (b) SendKeys va a la ventana con foco — él multitarea y quiere que la respuesta llegue a LA sesión bloqueada, no a lo que tenga delante.
+
+Descubrimiento que lo resuelve: `codex queue --thread <UUID> --message <texto> [--resume]` inyecta el mensaje en la sesión exacta, sin teclado, foco ni ventanas (validado en vivo: mensaje encolado en el thread 01a209a6). Errores observados: UUIDs de subagente descargado → código -32600; se resuelve probando todos los UUID del nombre del rollout hasta que uno entra.
+
+Cambios sobre el diseño:
+- Nueva clave de config `delivery`: `"queue"` (nuevo default) | `"sendkeys"` (legacy, con sus gates de foreground).
+- En modo queue: MATCH → extraer UUIDs del nombre del rollout → intentar `codex queue` con cada uno (primero que exit 0 gana; se registra cuál) → si todos fallan, fallback a la ruta SendKeys legacy.
+- Ritmo relajado para el caso de uso real (bucle bloqueo→resume→bloqueo): `cooldown_s=5`, `max_burst=50`, `burst_window_min=10` (la ráfaga pasa a ser solo válvula anti-bucle-infinito desbocado, no control de spam).
+- `require_terminal_foreground`, `terminals` y `foreground_wait_s` solo aplican al modo sendkeys.
+- `--resume` se mantiene en la llamada: si la sesión no está activa en ningún TUI, intenta reactivarla (warning a log si no hay daemon local).
+
 ## Qué queda para el que construya
 
 - Mover/adaptar `watch.ps1`, `stop.ps1` y tests al layout del plugin (paths por parámetro, sin rutas hardcodeadas al repo viejo).

@@ -68,7 +68,7 @@ $merged = Load-Config $partialCfg
 $missing = Load-Config (Join-Path $d 'no-existe.json')
 Assert (($merged.cooldown_s -eq 5) -and ($merged.send_text -eq '/goal resume') -and ($merged.dry_run -eq $true)) 'Load-Config mergea defaults'
 Assert (($merged.responses['context_window_exceeded'] -eq '/compact') -and ($merged.watch_codes.Count -eq 3)) 'Load-Config responses hashtable + watch_codes'
-Assert (($missing.cooldown_s -eq 60) -and ($missing.sessions_dir -like '*\.codex\sessions')) 'Load-Config defaults si falta archivo'
+Assert (($missing.cooldown_s -eq 5) -and ($missing.delivery -eq 'queue') -and ($missing.sessions_dir -like '*\.codex\sessions')) 'Load-Config defaults si falta archivo (adenda v0.2: queue, cooldown 5)'
 
 # T8 Write-Log: append con timestamp ISO
 $tmplog = Join-Path $d 'test-watchdog.log'
@@ -226,6 +226,37 @@ $helpOut = pwsh -NoProfile -File $cliPath
 Assert ("$helpOut" -match 'test') 'T14g usage documenta subcomando test'
 Assert ($LASTEXITCODE -eq 0) 'T14h sin args exit 0 (usage)'
 try { Remove-Item $t14dir -Recurse -Force -ErrorAction Stop } catch { }
+
+# T15 Get-RolloutThreadIds (Task 6 adenda: entrega por codex queue)
+Write-Host "== Task 6 adenda: queue delivery =="
+$dual = Get-RolloutThreadIds 'rollout-2026-11-23T19-23-57-01a208d7-fd7f-7a43-aeb3-78f1b969133d_01a209a6-833a-7ac1-bb80-638a8bd7d82c.jsonl'
+Assert ($dual.Count -eq 2) 'T15a extrae 2 UUIDs del nombre dual'
+Assert ($dual[0] -eq '01a208d7-fd7f-7a43-aeb3-78f1b969133d') 'T15b primer UUID (sesion)'
+Assert ($dual[1] -eq '01a209a6-833a-7ac1-bb80-638a8bd7d82c') 'T15c segundo UUID (thread)'
+$single = @(Get-RolloutThreadIds 'rollout-2026-11-24T19-51-07-01a20ee5-bdae-7450-ae9b-dae751c06dbf.jsonl')
+Assert ($single.Count -eq 1 -and $single[0] -eq '01a20ee5-bdae-7450-ae9b-dae751c06dbf') 'T15d nombre simple -> 1 UUID'
+Assert (@(Get-RolloutThreadIds 'rollout-sin-uuid.jsonl').Count -eq 0) 'T15e sin UUID -> vacio'
+
+# T16 Invoke-QueueDelivery con doble de proceso en el borde del CLI
+$t16dir = Join-Path $env:TEMP "t16-$(Get-Random)"; [void](New-Item -ItemType Directory -Force $t16dir)
+# falso codex: exit 0 + linea "Queued message <id> for thread <t>"
+$fake = Join-Path $t16dir 'fake-codex.cmd'
+Set-Content $fake "@echo off`r`necho Queued message fake-msg-1 for thread %1`r`nexit /b 0" -Encoding Ascii
+# falso codex fallido: exit 1
+$fakeBad = Join-Path $t16dir 'fakebad-codex.cmd'
+Set-Content $fakeBad "@echo off`r`necho Error: thread not found`r`nexit /b 1" -Encoding Ascii
+$t16log = Join-Path $t16dir 'q.log'
+$t16cfg = @{ log_file = $t16log }
+$stQ = Invoke-QueueDelivery '/goal resume' 'cyber_policy' @('aaaaaaaa-0000-0000-0000-000000000001','bbbbbbbb-0000-0000-0000-000000000002') ($t16cfg + @{ codex_exe = $fake })
+Assert ($stQ -eq 'SENT') 'T16a queue con doble exit-0 -> SENT'
+$qlog = Get-Content $t16log -Raw
+Assert ($qlog -match 'QUEUE_SENT') 'T16b loguea QUEUE_SENT'
+Assert ($qlog -match 'aaaaaaaa-0000') 'T16c loguea el thread usado (primero que funciona)'
+$stBad = Invoke-QueueDelivery '/goal resume' 'cyber_policy' @('cccccccc-0000-0000-0000-000000000003') ($t16cfg + @{ codex_exe = $fakeBad })
+Assert ($stBad -eq 'ERROR') 'T16d todos fallan -> ERROR (fallback a sendkeys lo decide el caller)'
+$t16log2 = Get-Content $t16log -Raw
+Assert ($t16log2 -match 'QUEUE_FAILED') 'T16e loguea QUEUE_FAILED con salida'
+try { Remove-Item $t16dir -Recurse -Force -ErrorAction Stop } catch { }
 
 try { Remove-Item $edDir -Recurse -Force -ErrorAction Stop } catch { }
 

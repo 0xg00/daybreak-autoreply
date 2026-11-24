@@ -1,0 +1,20 @@
+{
+  "name": "daybreak-dev",
+  "interface": {
+    "displayName": "Daybreak Dev"
+  },
+  "plugins": [
+    {
+      "name": "daybreak-autoreply",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

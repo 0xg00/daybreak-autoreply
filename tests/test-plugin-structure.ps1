@@ -60,8 +60,10 @@ if (Test-Path $cfgPath) {
     Assert ($cfg.responses.cyber_policy -eq '/goal resume') 'cyber_policy -> /goal resume'
     Assert ($cfg.responses.context_window_exceeded -eq '/compact') 'context_window_exceeded -> /compact'
     Assert ($cfg.dry_run -eq $false) 'dry_run = false (activo por defecto, requisito del socio)'
+    Assert ($cfg.delivery -eq 'queue') 'delivery = queue (adenda v0.2)'
     Assert ($cfg.delay_s -eq 3) 'delay_s = 3'
-    Assert ($cfg.cooldown_s -eq 60) 'cooldown_s = 60'
+    Assert ($cfg.cooldown_s -eq 5) 'cooldown_s = 5 (adenda v0.2)'
+    Assert ($cfg.max_burst -eq 50) 'max_burst = 50 (adenda v0.2)'
 }
 
 Write-Host ""

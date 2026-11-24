@@ -34,9 +34,10 @@ function Load-Config {
         }
         watch_codes                 = @('cyber_policy', 'usage_limit_exceeded', 'context_window_exceeded')
         pattern                     = '"codex_error_info":"cyber_policy'
+        delivery                    = 'queue'
         delay_s                     = 3
-        cooldown_s                  = 60
-        max_burst                   = 3
+        cooldown_s                  = 5
+        max_burst                   = 50
         burst_window_min            = 10
         pause_after_limit_min       = 15
         require_terminal_foreground = $true
@@ -415,6 +416,48 @@ function Invoke-Autorespond {
     return 'ERROR'
 }
 
+# --- Entrega por codex queue (Adenda v0.2) -----------------------------------------
+
+function Get-RolloutThreadIds {
+    <# Extrae TODOS los UUID del nombre de un rollout, en orden de aparicion.
+        rollout-<ts>-<session-uuid>_<thread-uuid>.jsonl -> 2 ids
+        rollout-<ts>-<uuid>.jsonl                       -> 1 id
+        El primero que acepte `codex queue` gana (los de subagentes
+        descargados fallan con -32600 y se saltan). #>
+    param([string]$FileName)
+    $ms = [regex]::Matches($FileName, '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+    return @($ms | ForEach-Object { $_.Value })   # envolver con @() en el caller si importa el cardenal
+}
+
+function Invoke-QueueDelivery {
+    <# Entrega el texto en LA sesión bloqueada vía `codex queue --thread`.
+        Sin teclado, foco ni ventanas: funciona con el usuario en cualquier
+        app y el codex en cualquier pestaña. Devuelve SENT | ERROR. #>
+    param(
+        [string]$Text,
+        [string]$Code,
+        [string[]]$ThreadIds,
+        [hashtable]$Cfg
+    )
+    $codexExe = if ($Cfg['codex_exe']) { [string]$Cfg['codex_exe'] } else { 'codex' }
+    foreach ($id in @($ThreadIds)) {
+        if (-not $id) { continue }
+        try {
+            $out = & $codexExe queue --thread $id --message $Text --resume 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Log ("QUEUE_SENT code={0} thread={1} texto={2} salida={3}" -f $Code, $id, $Text, (($out | Out-String).Trim() -replace "`r?`n", ' | ')) $Cfg
+                return 'SENT'
+            }
+            Write-Log ("QUEUE_RETRY thread={0} exit={1} salida={2}" -f $id, $LASTEXITCODE, (($out | Out-String).Trim() -replace "`r?`n", ' | ')) $Cfg
+        }
+        catch {
+            Write-Log ("QUEUE_RETRY thread={0} excepcion={1}" -f $id, $_.Exception.Message) $Cfg
+        }
+    }
+    Write-Log ("QUEUE_FAILED code={0} texto={1} (ningun UUID acepto el encolado)" -f $Code, $Text) $Cfg
+    return 'ERROR'
+}
+
 # --- Loop daemon (solo si no -NoDaemon) ---------------------------------------------
 
 if (-not $NoDaemon) {
@@ -472,7 +515,17 @@ if (-not $NoDaemon) {
                         if ($decision.Allowed) {
                             $texto = $cfg['responses'][$code] ?? [string]$cfg['send_text']
                             Write-Log ("MATCH code={0} file={1} -> autorespond" -f $code, $file.Name) $cfg
-                            $estado = Invoke-Autorespond $texto $code $cfg
+                            if ($cfg['delivery'] -eq 'queue') {
+                                $ids = Get-RolloutThreadIds $file.Name
+                                $estado = Invoke-QueueDelivery $texto $code $ids $cfg
+                                if ($estado -eq 'ERROR') {
+                                    Write-Log 'QUEUE agotado -> fallback sendkeys' $cfg
+                                    $estado = Invoke-Autorespond $texto $code $cfg
+                                }
+                            }
+                            else {
+                                $estado = Invoke-Autorespond $texto $code $cfg
+                            }
                             # I2: cooldown/rafaga solo consumen los estados que
                             # representan un intento real de envio (SENT/DRYRUN/
                             # ERROR; DRYRUN y ERROR cuentan a proposito). ABORT
