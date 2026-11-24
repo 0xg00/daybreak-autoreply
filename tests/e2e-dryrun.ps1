@@ -112,7 +112,7 @@ try {
     Assert ($logText -match 'MATCH code=cyber_policy') 'evento cyber_policy detectado (MATCH en log)'
     $dryrun = ([regex]::Matches($logText, 'DRYRUN')).Count
     Assert ($dryrun -eq 1) "DRYRUN aparece exactamente una vez (dedup por cooldown); hay $dryrun"
-    Assert ($logText -match 'DRYRUN code=cyber_policy texto=/goal resume') 'DRYRUN registra codigo y respuesta'
+    Assert ($logText -match 'DRYRUN code=cyber_policy texto=continua') 'DRYRUN registra codigo y respuesta'
     Assert ($logText -match [regex]::Escape('suprimido (cooldown/rafaga)')) 'segunda copia del evento suprimida por cooldown'
     Assert ($logText -notmatch 'AUTORESPOND code=') 'dry_run no envio nada real (sin AUTORESPOND en log)'
 

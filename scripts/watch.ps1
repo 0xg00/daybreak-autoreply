@@ -26,10 +26,10 @@ function Load-Config {
     $cfg = @{
         sessions_dir                = (Join-Path $env:USERPROFILE '.codex\sessions')
         log_file                    = 'watchdog.log'
-        send_text                   = '/goal resume'
+        send_text                   = 'continua'
         responses                   = @{
-            'cyber_policy'            = '/goal resume'
-            'usage_limit_exceeded'    = '/goal resume'
+            'cyber_policy'            = 'continua'
+            'usage_limit_exceeded'    = 'continua'
             'context_window_exceeded' = '/compact'
         }
         watch_codes                 = @('cyber_policy', 'usage_limit_exceeded', 'context_window_exceeded')

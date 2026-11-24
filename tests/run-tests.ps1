@@ -66,7 +66,7 @@ $partialCfg = Join-Path $d 'config-partial.json'
 [System.IO.File]::WriteAllText($partialCfg, '{ "cooldown_s": 5 }', [System.Text.UTF8Encoding]::new($false))
 $merged = Load-Config $partialCfg
 $missing = Load-Config (Join-Path $d 'no-existe.json')
-Assert (($merged.cooldown_s -eq 5) -and ($merged.send_text -eq '/goal resume') -and ($merged.dry_run -eq $true)) 'Load-Config mergea defaults'
+Assert (($merged.cooldown_s -eq 5) -and ($merged.send_text -eq 'continua') -and ($merged.dry_run -eq $true)) 'Load-Config mergea defaults'
 Assert (($merged.responses['context_window_exceeded'] -eq '/compact') -and ($merged.watch_codes.Count -eq 3)) 'Load-Config responses hashtable + watch_codes'
 Assert (($missing.cooldown_s -eq 5) -and ($missing.delivery -eq 'queue') -and ($missing.sessions_dir -like '*\.codex\sessions')) 'Load-Config defaults si falta archivo (adenda v0.2: queue, cooldown 5)'
 
