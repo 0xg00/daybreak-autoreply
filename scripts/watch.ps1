@@ -36,8 +36,8 @@ function Load-Config {
         pattern                     = '"codex_error_info":"cyber_policy'
         delivery                    = 'queue'
         delay_s                     = 3
-        cooldown_s                  = 5
-        max_burst                   = 50
+        cooldown_s                  = 0
+        max_burst                   = 0
         burst_window_min            = 10
         pause_after_limit_min       = 15
         require_terminal_foreground = $true
@@ -167,21 +167,24 @@ function Test-BurstAllowed {
     $allowed = $true
 
     if ($History.Count -gt 0) {
-        # cooldown: el ultimo disparo es demasiado reciente
-        if (($Now - $History[$History.Count - 1]).TotalSeconds -lt $cooldownS) { $allowed = $false }
+        # cooldown: el ultimo disparo es demasiado reciente (0 = sin cooldown;
+        # los bloques dentro de la ventana de delay se envian igual)
+        if ($cooldownS -gt 0 -and ($Now - $History[$History.Count - 1]).TotalSeconds -lt $cooldownS) { $allowed = $false }
 
-        # ventana de rafaga: demasiados disparos dentro de la ventana
-        $inWindow = 0
-        foreach ($t in $History) {
-            if (($Now - $t).TotalMinutes -lt $windowMin) { $inWindow++ }
-        }
-        if ($inWindow -ge $maxBurst) { $allowed = $false }
+        # ventana de rafaga: demasiados disparos dentro de la ventana (0 = sin limite)
+        if ($maxBurst -gt 0) {
+            $inWindow = 0
+            foreach ($t in $History) {
+                if (($Now - $t).TotalMinutes -lt $windowMin) { $inWindow++ }
+            }
+            if ($inWindow -ge $maxBurst) { $allowed = $false }
 
-        # pausa tras limite: la rafaga llego a max_burst y la pausa aun no expira
-        for ($i = $maxBurst - 1; $i -lt $History.Count; $i++) {
-            $spanMin = ($History[$i] - $History[$i - $maxBurst + 1]).TotalMinutes
-            if ($spanMin -lt $windowMin -and ($Now - $History[$i]).TotalMinutes -lt $pauseMin) {
-                $allowed = $false
+            # pausa tras limite: la rafaga llego a max_burst y la pausa aun no expira
+            for ($i = $maxBurst - 1; $i -lt $History.Count; $i++) {
+                $spanMin = ($History[$i] - $History[$i - $maxBurst + 1]).TotalMinutes
+                if ($spanMin -lt $windowMin -and ($Now - $History[$i]).TotalMinutes -lt $pauseMin) {
+                    $allowed = $false
+                }
             }
         }
     }

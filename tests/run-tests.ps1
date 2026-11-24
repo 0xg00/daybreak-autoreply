@@ -66,9 +66,15 @@ $partialCfg = Join-Path $d 'config-partial.json'
 [System.IO.File]::WriteAllText($partialCfg, '{ "cooldown_s": 5 }', [System.Text.UTF8Encoding]::new($false))
 $merged = Load-Config $partialCfg
 $missing = Load-Config (Join-Path $d 'no-existe.json')
-Assert (($merged.cooldown_s -eq 5) -and ($merged.send_text -eq 'continua') -and ($merged.dry_run -eq $true)) 'Load-Config mergea defaults'
+Assert (($merged.cooldown_s -eq 5) -and ($merged.send_text -eq 'continua') -and ($merged.dry_run -eq $true)) 'Load-Config mergea defaults (fixture cooldown 5 prevailce)'
 Assert (($merged.responses['context_window_exceeded'] -eq '/compact') -and ($merged.watch_codes.Count -eq 3)) 'Load-Config responses hashtable + watch_codes'
-Assert (($missing.cooldown_s -eq 5) -and ($missing.delivery -eq 'queue') -and ($missing.sessions_dir -like '*\.codex\sessions')) 'Load-Config defaults si falta archivo (adenda v0.2: queue, cooldown 5)'
+Assert (($missing.cooldown_s -eq 0) -and ($missing.delivery -eq 'queue') -and ($missing.sessions_dir -like '*\.codex\sessions')) 'Load-Config defaults si falta archivo (peticion socio: sin cooldown ni maximo)'
+
+# T5b semantica 0 = sin limite (peticion del socio): nada suprimido jamas
+$cfgFree = @{ cooldown_s = 0; max_burst = 0; burst_window_min = 10; pause_after_limit_min = 15 }
+$hFree = [System.Collections.Generic.List[datetime]]::new()
+1..10 | ForEach-Object { $hFree.Add((Get-Date).AddSeconds(-$_)) }  # 10 disparos hace <10 s
+Assert (Test-BurstAllowed (Get-Date) $hFree $cfgFree).Allowed 'cooldown 0 + max 0 -> nunca suprime (bloques en la ventana de delay se envian)'
 
 # T8 Write-Log: append con timestamp ISO
 $tmplog = Join-Path $d 'test-watchdog.log'

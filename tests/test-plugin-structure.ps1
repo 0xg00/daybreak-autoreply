@@ -63,8 +63,8 @@ if (Test-Path $cfgPath) {
     Assert ($cfg.dry_run -eq $false) 'dry_run = false (activo por defecto, requisito del socio)'
     Assert ($cfg.delivery -eq 'queue') 'delivery = queue (adenda v0.2)'
     Assert ($cfg.delay_s -eq 3) 'delay_s = 3'
-    Assert ($cfg.cooldown_s -eq 5) 'cooldown_s = 5 (adenda v0.2)'
-    Assert ($cfg.max_burst -eq 50) 'max_burst = 50 (adenda v0.2)'
+    Assert ($cfg.cooldown_s -eq 0) 'cooldown_s = 0 (sin cooldown, peticion del socio)'
+    Assert ($cfg.max_burst -eq 0) 'max_burst = 0 (sin maximo, peticion del socio)'
 }
 
 Write-Host ""
