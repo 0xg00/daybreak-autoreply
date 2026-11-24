@@ -57,15 +57,17 @@ switch ($Command) {
         }
         if (Test-Path -LiteralPath $wdLog) {
             "--- ultimos eventos ---"
-            Get-Content $wdLog -Tail 60 | Where-Object { $_ -match 'MATCH|SENT|DRYRUN|ABORT|ERROR' } | Select-Object -Last 5
+            Get-Content $wdLog -Tail 60 | Where-Object { $_ -match 'MATCH|SENT|DRYRUN|ABORT|ERROR|WARNING' } | Select-Object -Last 5
         }
     }
     'stop' {
         New-Item -ItemType File -Path $flagPath -Force | Out-Null
         $st = Get-CliState
         if ($st -and $st.pid) {
-            if (Get-Process -Id ([int]$st.pid) -ErrorAction SilentlyContinue) {
-                Stop-Process -Id ([int]$st.pid) -Force -ErrorAction SilentlyContinue
+            $p = Get-Process -Id ([int]$st.pid) -ErrorAction SilentlyContinue
+            # identidad: solo matar si sigue siendo un proceso watch (PID reutilizado = intocable)
+            if ($p -and (Test-IsWatchProcess $p)) {
+                Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
                 "daemon (pid $($st.pid)) detenido."
             }
         }

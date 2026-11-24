@@ -71,6 +71,20 @@ function Load-Config {
         $cfg['responses'] = $resp
     }
 
+    # claves desconocidas: un typo (dryrun, delai_s) NO puede caer en silencio
+    # a defaults — se recogen para que el daemon las loguee como WARNING
+    $known = @('sessions_dir','log_file','send_text','responses','watch_codes','pattern',
+        'delivery','sendkeys_fallback','per_thread_max','per_thread_window_min','per_thread_pause_min',
+        'delay_s','cooldown_s','max_burst','burst_window_min','pause_after_limit_min',
+        'require_terminal_foreground','foreground_wait_s','terminals','dry_run','codex_exe')
+    if ($json) {
+        $unknown = @($json.PSObject.Properties | Where-Object { $known -notcontains $_.Name } | ForEach-Object { $_.Name })
+        if ($unknown.Count -gt 0) {
+            Write-Warning ("config '$Path': claves desconocidas (se ignoran): $($unknown -join ', ')")
+            $cfg['__unknown_keys'] = $unknown
+        }
+    }
+
     # log_file relativo -> junto al config (PLUGIN_DATA), no al CWD del daemon
     if ($cfg['log_file'] -and $cfg['log_file'] -notmatch '^[A-Za-z]:[\\/]' -and $cfg['log_file'] -notmatch '^\\\\') {
         $cfg['log_file'] = Join-Path (Split-Path -Parent $Path) $cfg['log_file']
@@ -523,6 +537,12 @@ if (-not $NoDaemon) {
     }
 
     Write-Log ("daemon iniciado sessions_dir={0} watch_codes={1}" -f $cfg['sessions_dir'], ($cfg['watch_codes'] -join ',')) $cfg
+    if ($cfg['__unknown_keys']) {
+        Write-Log ("WARNING config: claves desconocidas ignoradas: {0}" -f ($cfg['__unknown_keys'] -join ', ')) $cfg
+    }
+    if (-not (Test-Path -LiteralPath $cfg['sessions_dir'])) {
+        Write-Log ("WARNING sessions_dir no existe: {0} — el daemon vigila nada hasta que exista" -f $cfg['sessions_dir']) $cfg
+    }
 
     while ($true) {
         # capturar el instante de escaneo ANTES de enumerar: los appends entre el

@@ -82,6 +82,43 @@ try {
     [System.IO.File]::WriteAllText($cbPath, ($cfgBad | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
     $out = pwsh -NoProfile -Command ". (Join-Path '$repo' 'scripts\watch.ps1') -NoDaemon; `$c = Load-Config '$cbPath'; Write-Output (`$c.cooldown_s)"
     Assert ("$out" -match '77') "E7 config con clave basura conserva las buenas (cooldown_s=77, actual: $out)"
+
+    # E8 portabilidad: DataDir CON ESPACIOS arranca daemon (quoting del spawn)
+    $spDir = Join-Path $root 'data con espacios raros'
+    [void](New-Item -ItemType Directory -Force $spDir)
+    $spCfg = @{ sessions_dir = (Join-Path $root 'sess'); dry_run = $true; delay_s = 0; require_terminal_foreground = $false; log_file = 'logs/watchdog.log' }
+    [System.IO.File]::WriteAllText((Join-Path $spDir 'config.json'), ($spCfg | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+    $null = Invoke-EnsureDaemon -DataDir $spDir -PluginRoot $repo -WatchScript $wsPath
+    Start-Sleep -Seconds 2
+    $spState = Get-Content (Join-Path $spDir 'state.json') -Raw | ConvertFrom-Json
+    Assert (Test-DaemonAlive ([int]$spState.pid) $wsPath) 'E8 daemon vivo con DataDir con espacios'
+    Assert (Test-Path (Join-Path $spDir 'logs\watchdog.log')) 'E8b daemon leyo su config (log creado junto al config)'
+    Stop-Process -Id ([int]$spState.pid) -Force -ErrorAction SilentlyContinue
+
+    # E9 identidad de kill: state apuntando a un proceso INOCENTE no lo mata
+    $innocent = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile','-Command','Start-Sleep 25') -WindowStyle Hidden -PassThru
+    Start-Sleep -Milliseconds 500
+    [System.IO.File]::WriteAllText((Join-Path $pdata 'state.json'), (@{ pid = $innocent.Id; script = 'X:\viejo\watch.ps1'; started = (Get-Date -Format o) } | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+    $null = Invoke-EnsureDaemon -DataDir $pdata -PluginRoot $repo -WatchScript $wsPath
+    Start-Sleep -Seconds 2
+    Assert (Get-Process -Id $innocent.Id -ErrorAction SilentlyContinue) 'E9a proceso inocente (PID reutilizado) NO recibe Stop-Process'
+    $st9 = Get-Content (Join-Path $pdata 'state.json') -Raw | ConvertFrom-Json
+    Assert ($st9.pid -ne $innocent.Id) 'E9b state ahora apunta al daemon nuevo'
+    Stop-Process -Id $innocent.Id -Force -ErrorAction SilentlyContinue
+    if ($st9.pid) { Stop-Process -Id ([int]$st9.pid) -Force -ErrorAction SilentlyContinue }
+
+    # E10 concurrencia: dos ensures en paralelo -> UN solo daemon para este DataDir
+    $ccDir = Join-Path $root 'data cc'
+    [void](New-Item -ItemType Directory -Force $ccDir)
+    [System.IO.File]::WriteAllText((Join-Path $ccDir 'config.json'), ($spCfg | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+    $ensureP = Join-Path $repo 'scripts\ensure-daemon.ps1'
+    $j1 = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile','-File',$ensureP,'-DataDir',('"{0}"' -f $ccDir),'-PluginRoot',$repo,'-WatchScript',$wsPath) -WindowStyle Hidden -PassThru
+    $j2 = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile','-File',$ensureP,'-DataDir',('"{0}"' -f $ccDir),'-PluginRoot',$repo,'-WatchScript',$wsPath) -WindowStyle Hidden -PassThru
+    Wait-Process -Id $j1.Id, $j2.Id -Timeout 20 -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    $ccProcs = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" | Where-Object { $_.CommandLine -match [regex]::Escape((Join-Path $ccDir 'config.json')) })
+    Assert ($ccProcs.Count -eq 1) "E10 dos SessionStart concurrentes -> un solo daemon (hay $($ccProcs.Count))"
+    foreach ($cp in $ccProcs) { Stop-Process -Id $cp.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 finally {
     if ($state -and $state.pid) { Stop-Process -Id ([int]$state.pid) -Force -ErrorAction SilentlyContinue }

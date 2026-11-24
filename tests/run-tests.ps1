@@ -95,6 +95,28 @@ Assert (Test-ThreadAllowed (Get-Date) $h4 @{ per_thread_max = 0 }).Allowed 'T17d
 Assert ($missing.sendkeys_fallback -eq $false) 'T18a sendkeys_fallback=false por defecto (nunca teclas a otra ventana)'
 Assert ($missing.per_thread_max -eq 3) 'T18b per_thread_max=3 por defecto'
 
+# T19 claves desconocidas se detectan (typo de dryrun no puede pasar en silencio)
+$t19cfg = Join-Path $d 'config-typo.json'
+[System.IO.File]::WriteAllText($t19cfg, '{"dryrun": true, "delai_s": 9, "cooldown_s": 5}', [System.Text.UTF8Encoding]::new($false))
+$t19out = pwsh -NoProfile -Command ". '$watchPath' -NoDaemon; `$c = Load-Config '$t19cfg'; Write-Output ($c.__unknown_keys -join ',')"
+Assert ("$t19out" -match 'dryrun') 'T19a typo dryrun reportado como desconocido'
+Assert ("$t19out" -match 'delai_s') 'T19b typo delai_s reportado'
+Assert ("$t19out" -notmatch 'cooldown_s') 'T19c clave valida no reportada'
+
+# T20 Test-IsWatchProcess (identidad para kills, F3): pwsh ejecutando watch.ps1 -File
+. (Join-Path $PSScriptRoot '..\scripts\ensure-daemon.ps1')
+Assert (-not (Test-IsWatchProcess (Get-Process -Id $PID))) 'T20a el propio pwsh de tests (sin watch.ps1) no es proceso watch'
+$t20p = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile','-Command','Start-Sleep 20') -WindowStyle Hidden -PassThru
+Start-Sleep -Milliseconds 600
+Assert (-not (Test-IsWatchProcess $t20p)) 'T20b pwsh ajeno (Start-Sleep) no es proceso watch'
+Stop-Process -Id $t20p.Id -Force -ErrorAction SilentlyContinue
+$t20cfg2 = Join-Path $d 't20-config.json'
+[System.IO.File]::WriteAllText($t20cfg2, (@{ sessions_dir = $d; dry_run = $true; log_file = (Join-Path $d 't20.log') } | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+$t20w = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile','-File',$watchPath,'-ConfigPath',$t20cfg2) -WindowStyle Hidden -PassThru
+Start-Sleep -Milliseconds 800
+Assert (Test-IsWatchProcess $t20w) 'T20c pwsh real ejecutando watch.ps1 -File SI es proceso watch'
+Stop-Process -Id $t20w.Id -Force -ErrorAction SilentlyContinue
+
 # T8 Write-Log: append con timestamp ISO
 $tmplog = Join-Path $d 'test-watchdog.log'
 Write-Log 'evento de prueba' @{ log_file = $tmplog }
