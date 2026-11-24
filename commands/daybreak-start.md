@@ -1,9 +1,8 @@
 ---
-description: Reactivar Daybreak (quita el flag disabled y arranca el daemon)
+description: Re-enable Daybreak (clears disabled flag, starts daemon)
 disable-model-invocation: true
 allowed-tools: Bash(pwsh:*)
 ---
 
-!`pwsh -NoProfile -File "${CLAUDE_PLUGIN_ROOT}/scripts/daybreak-cli.ps1" start`
+Show the CLI output verbatim (RUNNING line with PID). If RUNNING does not appear, suggest running /daybreak-status for diagnostics.
 
-Muestra la salida del CLI tal cual (línea RUNNING con PID). Si no aparece RUNNING, sugiere ejecutar `/daybreak-status` para diagnóstico.

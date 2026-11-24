@@ -119,6 +119,19 @@ try {
     $ccProcs = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" | Where-Object { $_.CommandLine -match [regex]::Escape((Join-Path $ccDir 'config.json')) })
     Assert ($ccProcs.Count -eq 1) "E10 dos SessionStart concurrentes -> un solo daemon (hay $($ccProcs.Count))"
     foreach ($cp in $ccProcs) { Stop-Process -Id $cp.ProcessId -Force -ErrorAction SilentlyContinue }
+
+    # E11 hot-reload: cambiar send_text con el daemon vivo -> el siguiente disparo usa el texto nuevo
+    $c11 = Get-Content (Join-Path $pdata 'config.json') -Raw -Encoding utf8 | ConvertFrom-Json
+    $c11 | Add-Member -NotePropertyName send_text -NotePropertyValue 'recargado' -Force
+    if (-not $c11.responses) { $c11 | Add-Member -NotePropertyName responses -NotePropertyValue ([pscustomobject]@{}) -Force }
+    $c11.responses | Add-Member -NotePropertyName cyber_policy -NotePropertyValue 'recargado' -Force
+    $c11.cooldown_s = 1
+    [System.IO.File]::WriteAllText((Join-Path $pdata 'config.json'), ($c11 | ConvertTo-Json -Depth 6), [System.Text.UTF8Encoding]::new($false))
+    Start-Sleep -Seconds 3   # cooldown 1s + reload por iteracion
+    Add-Content -LiteralPath $rollout -Value $eventLine -Encoding utf8
+    Start-Sleep -Seconds 3
+    $log11 = Get-Content $wdLog -Raw
+    Assert ($log11 -match 'texto=recargado') 'E11 daemon recarga config en caliente (texto nuevo usado sin reinicio)'
 }
 finally {
     if ($state -and $state.pid) { Stop-Process -Id ([int]$state.pid) -Force -ErrorAction SilentlyContinue }

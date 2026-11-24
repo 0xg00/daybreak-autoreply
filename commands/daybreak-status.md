@@ -1,9 +1,8 @@
 ---
-description: Estado del daemon Daybreak (PID, uptime, config, últimos disparos)
+description: Show Daybreak daemon status (PID, uptime, config, last events)
 disable-model-invocation: true
 allowed-tools: Bash(pwsh:*)
 ---
 
-!`pwsh -NoProfile -File "${CLAUDE_PLUGIN_ROOT}/scripts/daybreak-cli.ps1" status`
+Render the output as a compact two-column Markdown table (field, value) if the daemon is RUNNING, or a quote block with NOT RUNNING and the cause (disabled flag / not started). List the last events verbatim, no extra prose.
 
-Renderiza la salida como una tabla Markdown compacta con dos columnas (campo, valor) si el daemon está RUNNING, o un bloque de cita con NOT RUNNING y la causa (disabled flag / sin arrancar). Lista los últimos eventos tal cual, sin prosa extra.

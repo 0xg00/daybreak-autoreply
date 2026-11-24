@@ -1,9 +1,9 @@
 {
   "log_file": "logs/watchdog.log",
-  "send_text": "continua",
+  "send_text": "continue",
   "responses": {
-    "cyber_policy": "continua",
-    "usage_limit_exceeded": "continua",
+    "cyber_policy": "continue",
+    "usage_limit_exceeded": "continue",
     "context_window_exceeded": "/compact"
   },
   "watch_codes": [

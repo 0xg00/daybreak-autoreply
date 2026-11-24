@@ -45,7 +45,7 @@ Assert (Test-Path (Join-Path $root 'scripts\stop.ps1')) 'scripts/stop.ps1 existe
 Assert (Test-Path (Join-Path $root 'scripts\ensure-daemon.ps1')) 'scripts/ensure-daemon.ps1 existe'
 
 # commands
-foreach ($c in 'status', 'test', 'stop', 'start') {
+foreach ($c in 'status', 'test', 'stop', 'start', 'set') {
     Assert (Test-Path (Join-Path $root "commands\daybreak-$c.md")) "commands/daybreak-$c.md existe"
 }
 
@@ -57,8 +57,8 @@ if (Test-Path $cfgPath) {
     foreach ($code in 'cyber_policy', 'usage_limit_exceeded', 'context_window_exceeded') {
         Assert ($null -ne $cfg.responses.$code) "responses.$code presente"
     }
-    Assert ($cfg.send_text -eq 'continua') 'send_text = continua (peticion del socio)'
-    Assert ($cfg.responses.cyber_policy -eq 'continua') 'cyber_policy -> continua'
+    Assert ($cfg.send_text -eq 'continue') 'send_text = continue (default de fabrica)'
+    Assert ($cfg.responses.cyber_policy -eq 'continue') 'cyber_policy -> continue'
     Assert ($cfg.responses.context_window_exceeded -eq '/compact') 'context_window_exceeded -> /compact'
     Assert ($cfg.dry_run -eq $false) 'dry_run = false (activo por defecto, requisito del socio)'
     Assert ($cfg.delivery -eq 'queue') 'delivery = queue (adenda v0.2)'

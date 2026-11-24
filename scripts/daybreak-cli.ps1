@@ -3,6 +3,7 @@
 # Salida texto plano (para render Markdown en Codex). SIEMPRE exit 0.
 param(
     [Parameter(Position = 0)][string]$Command = '',
+    [Parameter(Position = 1, ValueFromRemainingArguments = $true)][string[]]$Rest = @(),
     [string]$DataDir = $env:CLAUDE_PLUGIN_DATA,
     [string]$PluginRoot = $env:CLAUDE_PLUGIN_ROOT
 )
@@ -81,6 +82,34 @@ switch ($Command) {
         $st = Get-CliState
         if ($st -and (Test-DaemonAlive ([int]$st.pid) $wsPath)) { "RUNNING pid=$($st.pid)" }
         else { "arrancado (verifica con status)" }
+    }
+    'set' {
+        $texto = ($Rest -join ' ').Trim()
+        if (-not $texto) {
+            $cur = $null
+            if (Test-Path -LiteralPath (Join-Path $dd 'config.json')) {
+                try { $cur = (Get-Content (Join-Path $dd 'config.json') -Raw -Encoding utf8 | ConvertFrom-Json).send_text } catch { }
+            }
+            "uso: /daybreak-set <texto>   (se aplica al momento; el daemon recarga la config solo)"
+            "texto actual: $($cur ?? '(sin config)')"
+            "ejemplo: /daybreak-set continue"
+            "se aplica a cyber_policy, usage_limit_exceeded y al fallback; context_window_exceeded mantiene /compact"
+        }
+        else {
+            $cfgPath = Join-Path $dd 'config.json'
+            if (-not (Test-Path -LiteralPath $cfgPath)) {
+                New-Item -ItemType Directory -Force -Path $dd | Out-Null
+                [System.IO.File]::WriteAllText($cfgPath, '{}', [System.Text.UTF8Encoding]::new($false))
+            }
+            $c = Get-Content $cfgPath -Raw -Encoding utf8 | ConvertFrom-Json
+            $c | Add-Member -NotePropertyName send_text -NotePropertyValue $texto -Force
+            if (-not $c.responses) { $c | Add-Member -NotePropertyName responses -NotePropertyValue ([pscustomobject]@{}) -Force }
+            $c.responses | Add-Member -NotePropertyName cyber_policy -NotePropertyValue $texto -Force
+            $c.responses | Add-Member -NotePropertyName usage_limit_exceeded -NotePropertyValue $texto -Force
+            [System.IO.File]::WriteAllText($cfgPath, ($c | ConvertTo-Json -Depth 6), [System.Text.UTF8Encoding]::new($false))
+            "texto de respuesta = $texto (aplicado a cyber_policy, usage_limit_exceeded y fallback)"
+            "el daemon lo recarga en caliente en unos segundos; /compact para context_window_exceeded no cambia"
+        }
     }
     'test' {
         $e2e = Join-Path $pr 'tests\e2e-plugin.ps1'

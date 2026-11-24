@@ -66,7 +66,7 @@ $partialCfg = Join-Path $d 'config-partial.json'
 [System.IO.File]::WriteAllText($partialCfg, '{ "cooldown_s": 5 }', [System.Text.UTF8Encoding]::new($false))
 $merged = Load-Config $partialCfg
 $missing = Load-Config (Join-Path $d 'no-existe.json')
-Assert (($merged.cooldown_s -eq 5) -and ($merged.send_text -eq 'continua') -and ($merged.dry_run -eq $true)) 'Load-Config mergea defaults (fixture cooldown 5 prevailce)'
+Assert (($merged.cooldown_s -eq 5) -and ($merged.send_text -eq 'continue') -and ($merged.dry_run -eq $true)) 'Load-Config mergea defaults (fixture cooldown 5 prevailce, default fabrica continue)'
 Assert (($merged.responses['context_window_exceeded'] -eq '/compact') -and ($merged.watch_codes.Count -eq 3)) 'Load-Config responses hashtable + watch_codes'
 Assert (($missing.cooldown_s -eq 0) -and ($missing.delivery -eq 'queue') -and ($missing.sessions_dir -like '*\.codex\sessions')) 'Load-Config defaults si falta archivo (peticion socio: sin cooldown ni maximo)'
 
@@ -272,6 +272,23 @@ Stop-Process -Id ([int]$t14state.pid) -Force -ErrorAction SilentlyContinue
 $helpOut = pwsh -NoProfile -File $cliPath
 Assert ("$helpOut" -match 'test') 'T14g usage documenta subcomando test'
 Assert ($LASTEXITCODE -eq 0) 'T14h sin args exit 0 (usage)'
+
+# T21 cli set: cambia el texto de respuesta y NO toca /compact
+$t21dir = Join-Path $env:TEMP "t21-$(Get-Random)"; [void](New-Item -ItemType Directory -Force $t21dir)
+$t21sess = Join-Path $t21dir 'sess'; [void](New-Item -ItemType Directory -Force $t21sess)
+[System.IO.File]::WriteAllText((Join-Path $t21dir 'config.json'), (@{ sessions_dir = $t21sess; dry_run = $true; send_text = 'continua'; responses = @{ cyber_policy = 'continua'; usage_limit_exceeded = 'continua'; context_window_exceeded = '/compact' }; log_file = 'logs/watchdog.log' } | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+$setOut = pwsh -NoProfile -File $cliPath set ' sigue con ello ' -DataDir $t21dir -PluginRoot $repoRoot
+Assert ($LASTEXITCODE -eq 0) 'T21a set exit 0'
+$t21c = Get-Content (Join-Path $t21dir 'config.json') -Raw -Encoding utf8 | ConvertFrom-Json
+Assert ($t21c.send_text -eq 'sigue con ello') 'T21b send_text actualizado (trim)'
+Assert ($t21c.responses.cyber_policy -eq 'sigue con ello') 'T21c cyber_policy actualizado'
+Assert ($t21c.responses.usage_limit_exceeded -eq 'sigue con ello') 'T21d usage_limit actualizado'
+Assert ($t21c.responses.context_window_exceeded -eq '/compact') 'T21e /compact intacto'
+$getOut = pwsh -NoProfile -File $cliPath set -DataDir $t21dir -PluginRoot $repoRoot
+Assert ("$getOut" -match 'sigue con ello') 'T21f set sin args muestra el texto actual'
+$badSet = pwsh -NoProfile -File $cliPath set '   ' -DataDir $t21dir -PluginRoot $repoRoot
+Assert ("$badSet" -match 'uso|texto|vac') 'T21g set vacio -> ayuda, no rompe'
+try { Remove-Item $t21dir -Recurse -Force -ErrorAction Stop } catch { }
 try { Remove-Item $t14dir -Recurse -Force -ErrorAction Stop } catch { }
 
 # T15 Get-RolloutThreadIds (Task 6 adenda: entrega por codex queue)

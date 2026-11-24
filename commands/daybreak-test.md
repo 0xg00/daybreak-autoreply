@@ -1,9 +1,8 @@
 ---
-description: Test sandbox del motor Daybreak (DRYRUN, sin teclas reales)
+description: Run Daybreak engine sandbox test (DRYRUN, no real messages)
 disable-model-invocation: true
 allowed-tools: Bash(pwsh:*)
 ---
 
-!`pwsh -NoProfile -File "${CLAUDE_PLUGIN_ROOT}/scripts/daybreak-cli.ps1" test`
+Runs the plugin's sandbox E2E (isolated temp dir, forced dry_run, never touches ~/.codex/sessions and sends nothing real). Show the assert summary and the xit=0 line in a code block. If any assert fails, show it in full.
 
-Ejecuta el E2E sandbox del plugin (directorio temporal aislado, dry_run forzado, sin tocar `~/.codex/sessions` ni enviar teclas). Presenta el resumen de asserts y la línea `exit=0` en un bloque de código. Si algún assert falla, muéstralo completo, sin resumir.

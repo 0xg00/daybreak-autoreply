@@ -1,89 +1,86 @@
 # daybreak-autoreply
 
-Plugin de Codex CLI que **responde automáticamente a los bloqueos de ciberseguridad** (el famoso "This content can't be shown… apply for Daybreak"). Cuando un turno muere por `cyber_policy`, el plugin envía solo el comando que configures — por defecto `/goal resume` — a la terminal donde corre Codex. Sin tocar el teclado.
+Codex CLI plugin that **auto-replies to cybersecurity policy blocks** (the infamous "This content can't be shown… apply for Daybreak" wall). When a turn dies with `cyber_policy` or `usage_limit_exceeded`, the plugin injects your text — `continue` by default — into **that exact session**. No keystrokes, no focus stealing, works while you're in any other app or tab.
 
-**Windows-only**: el motor usa SendKeys, portapapeles y CIM.
+**Windows-only** (the engine uses CIM, with an optional SendKeys fallback).
 
-## Cómo funciona
+## Install
 
-1. Detecta el bloqueo leyendo los rollouts de sesión (`~/.codex/sessions/**/rollout-*.jsonl`, solo lectura) — el campo estructural `payload.error.codex_error_info`, no texto suelto. Latencia de detección: ~1-2 s.
-2. Tras `delay_s` (3 s por defecto), inyecta tu texto **en la sesión bloqueada exacta** con `codex queue --thread <uuid> --message <texto> --resume`: sin teclado, sin robar foco, funciona con el codex en cualquier pestaña y tú en cualquier aplicación. UUIDs de subagentes que rechazan el encolado se saltan solos; si ninguno entra, cae al modo legacy SendKeys (foreground-safe).
-3. Sin límites de ritmo por defecto: cada bloque recibe su respuesta (cooldown y burst en `0` = ilimitados; pon valores > 0 si quieres una válvula anti-bucle).
-
-Mapa por defecto (editable):
-
-| código | respuesta |
-|---|---|
-| `cyber_policy` | `/goal resume` |
-| `usage_limit_exceeded` | `/goal resume` |
-| `context_window_exceeded` | `/compact` |
-
-## Instalación
-
-1. Añade el marketplace a `~/.codex/config.toml` (repo publicado en GitHub; sustituye la URL por la tuya):
-
-```toml
-[marketplaces.daybreak]
-source_type = "git"
-source = "https://github.com/TU-USUARIO/daybreak-autoreply.git"
+```
+codex plugin marketplace add https://github.com/YOUR-USER/daybreak-autoreply.git
+codex plugin add daybreak-autoreply
 ```
 
-Para desarrollo local: `source_type = "local"` y `source = '<ruta absoluta del repo>'`.
+Then: `/hooks` → trust the plugin's `SessionStart` hook (once — Codex reminds you at startup if pending) → open a new session. The hook starts the watchdog daemon on its own. There is no step 4.
 
-2. En Codex CLI: `/plugins` → pestaña del marketplace → **Install** `daybreak-autoreply`.
-3. `/hooks` → confía el hook `SessionStart` del plugin (una vez; Codex avisa al arranque si queda pendiente).
-4. Abre una sesión nueva. El hook arranca el daemon solo — no hay paso 5.
+For local development: `codex plugin marketplace add <absolute path to this repo>` instead of the git URL.
 
-> ⚠️ **Activo por defecto**: `dry_run=false`. Instalar y abrir sesión = el watchdog queda armado y enviará el comando real en el próximo bloqueo. Si quieres probar sin teclas reales primero, edita `config.json` (ver abajo) y pon `"dry_run": true`, o ejecuta `/daybreak-test` que corre un sandbox aislado.
+> ⚠️ **Active by default**: `dry_run=false`. Install + open a session = the watchdog is armed and will send the real reply on the next block. To try it safely first, run `/daybreak-test` (isolated sandbox, no real messages) or set `"dry_run": true` in your config.
+
+## How it works
+
+1. Detects blocks by reading session rollouts (`~/.codex/sessions/**/rollout-*.jsonl`, read-only) — the structural `payload.error.codex_error_info` field, never loose text. Detection latency: ~1-2 s.
+2. Injects your text into **the exact blocked session** with `codex queue --thread <uuid> --message <text>`: no keyboard, no focus stealing, works with Codex in any tab and you in any application. Subagent UUIDs that reject queuing are skipped automatically.
+3. No rate limits by default: every block gets its reply (cooldown and burst at `0` = unlimited). The only valve: one SAME session in a tight loop (block→continue→block) is paused for 15 min after 3 replies in 5 min (`per_thread_max: 0` removes it).
+
+Default reply map (change it with `/daybreak-set`):
+
+| code | reply |
+|---|---|
+| `cyber_policy` | `continue` |
+| `usage_limit_exceeded` | `continue` |
+| `context_window_exceeded` | `/compact` |
 
 ## Slash commands
 
-| comando | qué hace |
+| command | what it does |
 |---|---|
-| `/daybreak-status` | PID, uptime, config, últimos 5 disparos |
-| `/daybreak-test` | E2E sandbox (DRYRUN, sin teclas reales) |
-| `/daybreak-stop` | apagado **persistente** (sobrevive sesiones) |
-| `/daybreak-start` | reactiva y arranca |
+| `/daybreak-set <text>` | change the reply text — hot-reloaded, no restart |
+| `/daybreak-status` | PID, uptime, config, last 5 events |
+| `/daybreak-test` | sandbox E2E (DRYRUN, no real messages) |
+| `/daybreak-stop` | persistent off (survives sessions) |
+| `/daybreak-start` | re-enable and start |
 
-## Configuración
+## Configuration
 
-El archivo vive en `~/.codex/plugin-data/daybreak-autoreply/config.json` (se crea la primera vez; editar y hacer `/daybreak-stop` + `/daybreak-start` para recargar).
+Lives at `~/.codex/plugin-data/daybreak-autoreply/config.json` (created on first run; hot-reloaded every few seconds — edit and it just applies).
 
-| clave | default | significado |
+| key | default | meaning |
 |---|---|---|
-| `sessions_dir` | `~/.codex/sessions` | dónde vigilar rollouts |
-| `responses` | mapa de arriba | código → texto a enviar |
-| `watch_codes` | los tres | códigos que disparan |
-| `send_text` | `/goal resume` | fallback si el código no está en `responses` |
-| `delivery` | `queue` | `queue` = inyecta en LA sesión vía `codex queue` (sin teclado ni foco); `sendkeys` = modo legacy con gates de foreground |
-| `delay_s` | `3` | espera tras detectar (bloques que caen dentro se envían igual) |
-| `cooldown_s` | `0` | mínimo entre disparos (`0` = sin cooldown) |
-| `max_burst` / `burst_window_min` | `0` / `10` | `0` = sin máximo (válvula opcional anti-bucle desbocado) |
-| `pause_after_limit_min` | `15` | pausa tras agotar la ráfaga |
-| `require_terminal_foreground` | `true` | jamás teclear si el foco no es terminal |
-| `terminals` | 9 procesos | lista de terminales válidas (WT, conhost, cmd, powershell, pwsh, Code, alacritty, wezterm, mintty) |
-| `foreground_wait_s` | `120` | espera máx. a que el foco vuelva a terminal |
-| `dry_run` | `false` | `true` = solo loguear, no enviar |
-| `log_file` | `logs/watchdog.log` | relativo al dir de datos del plugin |
+| `sessions_dir` | `~/.codex/sessions` | where to watch rollouts |
+| `responses` | map above | code → text to send |
+| `watch_codes` | all three | codes that trigger |
+| `send_text` | `continue` | fallback if the code isn't in `responses` |
+| `delivery` | `queue` | `queue` = inject into the exact session via `codex queue`; `sendkeys` = legacy keyboard mode with foreground gates |
+| `sendkeys_fallback` | `false` | if `queue` fails, never touch the keyboard (set `true` to enable legacy fallback) |
+| `per_thread_max` / `per_thread_window_min` / `per_thread_pause_min` | `3` / `5` / `15` | per-session loop breaker (`0` = off) |
+| `delay_s` | `3` | wait after detection (blocks landing inside the window are still sent) |
+| `cooldown_s` | `0` | minimum between replies (`0` = none) |
+| `max_burst` / `burst_window_min` | `0` / `10` | `0` = unlimited (optional anti-runaway valve) |
+| `pause_after_limit_min` | `15` | pause after exhausting the burst valve |
+| `require_terminal_foreground` | `true` | sendkeys mode only: never type unless focus is a terminal |
+| `terminals` | 9 processes | sendkeys mode only: valid terminal processes |
+| `foreground_wait_s` | `120` | sendkeys mode only: max wait for terminal focus |
+| `dry_run` | `false` | `true` = log only, send nothing |
+| `log_file` | `logs/watchdog.log` | relative to the plugin data dir |
 
-## Actualizar
+## Updating
 
-`/plugins` → reinstall/update. El hook cambia de hash → `/hooks` → re-confiar (Codex avisa al arranque). El daemon viejo se detecta y reemplaza solo (saneo por ruta en `state.json`).
+`/plugins` → reinstall/update. The hook changes hash → `/hooks` → re-trust (Codex warns at startup). An old daemon from a previous cache path is detected and replaced automatically (route-based cleanup in `state.json`).
 
-## Límites conocidos
+## Known limits
 
-- **Multi-pestaña en Windows Terminal**: SendKeys va a la ventana con foco; con varias abiertas puede caer en otra (mitigado por el gate de foreground + cooldown).
-- **Colisión con tu escritura**: hay una ventana de ~500 ms de pegado+Enter en la que no debes teclear.
-- **Toast**: requiere PowerShell 7.4+ (best-effort, sin toast todo lo demás funciona).
-- Depende del formato interno de rollouts de Codex; si OpenAI lo cambia, hay que adaptar el parser.
+- Reply delivery depends on Codex CLI internals (`codex queue`, rollout format). If OpenAI changes them, the plugin needs an update.
+- The per-session loop breaker exists because an unattended block→continue loop burns quota; tune it to taste.
+- Toasts require PowerShell 7.4+ (best-effort; everything else works without them).
 
-## Desarrollo
+## Development
 
-```powershell
-pwsh -File tests/run-tests.ps1            # 46 asserts unit
-pwsh -File tests/e2e-plugin.ps1           # E2E integración (sandbox)
-pwsh -File tests/e2e-dryrun.ps1           # E2E motor (sandbox)
-pwsh -File tests/test-plugin-structure.ps1 # estructura del plugin
+```
+pwsh -File tests/run-tests.ps1             # 76 unit asserts
+pwsh -File tests/e2e-plugin.ps1            # plugin integration E2E (sandbox)
+pwsh -File tests/e2e-dryrun.ps1            # sendkeys engine E2E (sandbox)
+pwsh -File tests/test-plugin-structure.ps1 # plugin structure checks
 ```
 
-Licencia MIT.
+MIT license.

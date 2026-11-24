@@ -26,10 +26,10 @@ function Load-Config {
     $cfg = @{
         sessions_dir                = (Join-Path $env:USERPROFILE '.codex\sessions')
         log_file                    = 'watchdog.log'
-        send_text                   = 'continua'
+        send_text                   = 'continue'
         responses                   = @{
-            'cyber_policy'            = 'continua'
-            'usage_limit_exceeded'    = 'continua'
+            'cyber_policy'            = 'continue'
+            'usage_limit_exceeded'    = 'continue'
             'context_window_exceeded' = '/compact'
         }
         watch_codes                 = @('cyber_policy', 'usage_limit_exceeded', 'context_window_exceeded')
@@ -518,6 +518,7 @@ if (-not $NoDaemon) {
     $buffers  = @{}
     $history  = [System.Collections.Generic.List[datetime]]::new()
     $threadHist = @{}   # breaker por hilo: uuid -> List[datetime] de envios
+    $warnedUnknown = $false
     $lastScan = Get-Date  # solo archivos tocados desde el arranque (no replay de historia vieja)
 
     # C1: todo rollout YA existente al arrancar se inicializa con offset = su
@@ -545,6 +546,14 @@ if (-not $NoDaemon) {
     }
 
     while ($true) {
+        # hot-reload: /daybreak-set escribe config.json y el daemon lo recoge solo.
+        # Reload por iteracion (archivo pequeno); warnings solo la primera vez.
+        $cfg = Load-Config $ConfigPath
+        if ($cfg['__unknown_keys'] -and -not $warnedUnknown) {
+            $warnedUnknown = $true
+            Write-Log ("WARNING config: claves desconocidas ignoradas: {0}" -f ($cfg['__unknown_keys'] -join ', ')) $cfg
+        }
+
         # capturar el instante de escaneo ANTES de enumerar: los appends entre el
         # snapshot y la actualizacion de lastScan quedan cubiertos en el proximo poll
         # (los offsets hacen inofensiva la re-enumeracion)
