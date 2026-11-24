@@ -115,6 +115,79 @@ Assert ($logB -match 'ABORT') 'T7b sin terminal tras espera -> ABORT'
 Assert ($logB -notmatch 'DRYRUN') 'T7b ABORT no llega a DRYRUN'
 Assert ($estadoB -eq 'ABORT') 'T7b estado devuelto ABORT (I2)'
 
+# --- Task 3: ensure-daemon (T8-T12) -----------------------------------------
+Write-Host "== Task 3: ensure-daemon =="
+$ensurePath = Join-Path $PSScriptRoot '..\scripts\ensure-daemon.ps1'
+. $ensurePath   # dot-source: define funciones, NO corre main (guard de invocacion)
+
+$edDir = Join-Path $env:TEMP "edtest-$(Get-Random)"
+[void](New-Item -ItemType Directory -Force -Path $edDir)
+$defaultCfg = Join-Path $PSScriptRoot '..\config.json'
+
+# T8 Initialize-PluginData: crea config + logs; NO sobreescribe config del usuario
+$cfgUser = Initialize-PluginData $edDir $defaultCfg
+Assert (Test-Path $cfgUser) 'T8a crea config de usuario'
+Assert (Test-Path (Join-Path $edDir 'logs')) 'T8b crea dir logs'
+($cfg = Get-Content $cfgUser -Raw -Encoding utf8 | ConvertFrom-Json) | Out-Null
+Assert ($cfg.dry_run -eq $false) 'T8c config copiado conserva dry_run=false'
+# mutar clave centinela y re-inicializar: debe persistir
+$j = Get-Content $cfgUser -Raw -Encoding utf8 | ConvertFrom-Json
+$j | Add-Member -NotePropertyName sentinela -NotePropertyValue 'mia' -Force
+[System.IO.File]::WriteAllText($cfgUser, ($j | ConvertTo-Json -Depth 6), [System.Text.UTF8Encoding]::new($false))
+[void](Initialize-PluginData $edDir $defaultCfg)
+$j2 = Get-Content $cfgUser -Raw -Encoding utf8 | ConvertFrom-Json
+Assert ($j2.sentinela -eq 'mia') 'T8d NO sobreescribe config ya existente'
+
+# T9 Test-DaemonAlive
+Assert (-not (Test-DaemonAlive 999999 'X:\nada\watch.ps1')) 'T9a PID inexistente -> false'
+$wsPath = (Resolve-Path (Join-Path $PSScriptRoot '..\scripts\watch.ps1')).Path
+# daemon real y VIVO: loop contra un sessions_dir temporal vacio (inofensivo)
+$t9dir = Join-Path $env:TEMP "t9-$(Get-Random)"; [void](New-Item -ItemType Directory -Force $t9dir)
+$t9cfg = Join-Path $t9dir 'config.json'
+[System.IO.File]::WriteAllText($t9cfg, (@{ sessions_dir = $t9dir; dry_run = $true; log_file = (Join-Path $t9dir 'wd.log') } | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+$realDaemon = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $wsPath, '-ConfigPath', $t9cfg) -WindowStyle Hidden -PassThru
+Start-Sleep -Milliseconds 900
+Assert (Test-DaemonAlive $realDaemon.Id $wsPath) 'T9b pwsh real con watch.ps1 -> true'
+$otro = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep 30') -WindowStyle Hidden -PassThru
+Start-Sleep -Milliseconds 600
+Assert (-not (Test-DaemonAlive $otro.Id $wsPath)) 'T9c pwsh SIN watch.ps1 -> false (saneo post-update)'
+Stop-Process -Id $otro.Id -Force -ErrorAction SilentlyContinue
+Stop-Process -Id $realDaemon.Id -Force -ErrorAction SilentlyContinue
+try { Remove-Item $t9dir -Recurse -Force -ErrorAction Stop } catch { }
+
+# T10 disabled.flag respeta: no crea state ni proceso
+[void](Invoke-EnsureDaemon $edDir $PSScriptRoot $wsPath)  # arranca uno para tener base
+Start-Sleep -Milliseconds 600
+$state1 = Get-Content (Join-Path $edDir 'state.json') -Raw | ConvertFrom-Json
+Stop-Process -Id $state1.pid -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 300
+Remove-Item (Join-Path $edDir 'state.json') -Force   # partir de cero: el flag debe impedir CREAR
+New-Item -ItemType File -Path (Join-Path $edDir 'disabled.flag') -Force | Out-Null
+[void](Invoke-EnsureDaemon $edDir $PSScriptRoot $wsPath)
+Start-Sleep -Milliseconds 600
+Assert (-not (Test-Path (Join-Path $edDir 'state.json'))) 'T10a disabled.flag -> no crea state'
+$procsFlag = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" | Where-Object { $_.CommandLine -match [regex]::Escape((Join-Path $edDir 'config.json')) })
+Assert ($procsFlag.Count -eq 0) 'T10b disabled.flag -> no lanza proceso'
+Remove-Item (Join-Path $edDir 'disabled.flag') -Force
+
+# T11 dos invocaciones seguidas con daemon vivo -> mismo PID (no duplica)
+[void](Invoke-EnsureDaemon $edDir $PSScriptRoot $wsPath)
+Start-Sleep -Milliseconds 800
+$stateA = Get-Content (Join-Path $edDir 'state.json') -Raw | ConvertFrom-Json
+[void](Invoke-EnsureDaemon $edDir $PSScriptRoot $wsPath)
+Start-Sleep -Milliseconds 400
+$stateB = Get-Content (Join-Path $edDir 'state.json') -Raw | ConvertFrom-Json
+Assert ($stateA.pid -eq $stateB.pid) 'T11 segunda invocacion no relanza (mismo PID)'
+Assert (Test-DaemonAlive $stateB.pid $wsPath) 'T11 daemon vivo tras doble ensure'
+Stop-Process -Id $stateB.pid -Force -ErrorAction SilentlyContinue
+
+# T12 DataDir imposible -> exit 0 (invocacion como -File, proceso aparte)
+$bad = 'Z:\no\existe\ed-' + (Get-Random)
+$proc12 = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $ensurePath, '-DataDir', $bad) -Wait -PassThru -WindowStyle Hidden
+Assert ($proc12.ExitCode -eq 0) 'T12 DataDir imposible termina exit 0'
+
+try { Remove-Item $edDir -Recurse -Force -ErrorAction Stop } catch { }
+
 # Limpieza y resumen
 try { Remove-Item $d -Recurse -Force -ErrorAction Stop } catch { }
 try { Remove-Item $t2dir -Recurse -Force -ErrorAction Stop } catch { }
