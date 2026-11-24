@@ -76,6 +76,25 @@ $hFree = [System.Collections.Generic.List[datetime]]::new()
 1..10 | ForEach-Object { $hFree.Add((Get-Date).AddSeconds(-$_)) }  # 10 disparos hace <10 s
 Assert (Test-BurstAllowed (Get-Date) $hFree $cfgFree).Allowed 'cooldown 0 + max 0 -> nunca suprime (bloques en la ventana de delay se envian)'
 
+# T17 breaker por hilo (bucle bloqueo->continua->bloqueo en UNA sesion)
+$cfgPT = @{ per_thread_max = 3; per_thread_window_min = 5; per_thread_pause_min = 15 }
+$h1 = [System.Collections.Generic.List[datetime]]::new()
+1..2 | ForEach-Object { $h1.Add((Get-Date).AddSeconds(-$_)) }
+Assert (Test-ThreadAllowed (Get-Date) $h1 $cfgPT).Allowed 'T17a 2 envios al hilo -> permitido'
+$h2 = [System.Collections.Generic.List[datetime]]::new()
+1..3 | ForEach-Object { $h2.Add((Get-Date).AddSeconds(-$_)) }
+Assert (-not (Test-ThreadAllowed (Get-Date) $h2 $cfgPT).Allowed) 'T17b 3 envios en <5 min -> pausa del hilo'
+$h3 = [System.Collections.Generic.List[datetime]]::new()
+1..3 | ForEach-Object { $h3.Add((Get-Date).AddMinutes(-16)) } ; $h3.Add((Get-Date).AddSeconds(-30))
+Assert (Test-ThreadAllowed (Get-Date) $h3 $cfgPT).Allowed 'T17c fuera de ventana -> permitido'
+$h4 = [System.Collections.Generic.List[datetime]]::new()
+1..9 | ForEach-Object { $h4.Add((Get-Date).AddSeconds(-$_)) }
+Assert (Test-ThreadAllowed (Get-Date) $h4 @{ per_thread_max = 0 }).Allowed 'T17d per_thread_max=0 -> desactivado'
+
+# T18 defaults post-incidente: sin fallback sendkeys, breaker activo
+Assert ($missing.sendkeys_fallback -eq $false) 'T18a sendkeys_fallback=false por defecto (nunca teclas a otra ventana)'
+Assert ($missing.per_thread_max -eq 3) 'T18b per_thread_max=3 por defecto'
+
 # T8 Write-Log: append con timestamp ISO
 $tmplog = Join-Path $d 'test-watchdog.log'
 Write-Log 'evento de prueba' @{ log_file = $tmplog }

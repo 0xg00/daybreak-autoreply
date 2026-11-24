@@ -35,6 +35,10 @@ function Load-Config {
         watch_codes                 = @('cyber_policy', 'usage_limit_exceeded', 'context_window_exceeded')
         pattern                     = '"codex_error_info":"cyber_policy'
         delivery                    = 'queue'
+        sendkeys_fallback           = $false
+        per_thread_max              = 3
+        per_thread_window_min       = 5
+        per_thread_pause_min        = 15
         delay_s                     = 3
         cooldown_s                  = 0
         max_burst                   = 0
@@ -446,7 +450,8 @@ function Invoke-QueueDelivery {
     foreach ($id in @($ThreadIds)) {
         if (-not $id) { continue }
         try {
-            $out = & $codexExe queue --thread $id --message $Text --resume 2>&1
+            # SIN --resume: el intento de resume roba el foco de pestana en el TUI
+            $out = & $codexExe queue --thread $id --message $Text 2>&1
             if ($LASTEXITCODE -eq 0) {
                 Write-Log ("QUEUE_SENT code={0} thread={1} texto={2} salida={3}" -f $Code, $id, $Text, (($out | Out-String).Trim() -replace "`r?`n", ' | ')) $Cfg
                 return 'SENT'
@@ -461,6 +466,36 @@ function Invoke-QueueDelivery {
     return 'ERROR'
 }
 
+function Test-ThreadAllowed {
+    <# Breaker por hilo: distinto del ritmo global. Un MISMO thread que acumula
+        per_thread_max respuestas dentro de per_thread_window_min entra en pausa
+        per_thread_pause_min (bucle bloqueo->continua->bloqueo sin salida).
+        per_thread_max = 0 -> desactivado (todo se envia). #>
+    param(
+        [datetime]$Now,
+        [System.Collections.Generic.List[datetime]]$History,
+        [hashtable]$Cfg
+    )
+    $maxSends = [int]$Cfg['per_thread_max']
+    $windowMin = [double]$Cfg['per_thread_window_min']
+    $pauseMin = [double]$Cfg['per_thread_pause_min']
+
+    if ($null -eq $History) { $History = [System.Collections.Generic.List[datetime]]::new() }
+
+    $allowed = $true
+    if ($maxSends -gt 0 -and $History.Count -ge $maxSends) {
+        $inWindow = 0
+        foreach ($t in $History) {
+            if (($Now - $t).TotalMinutes -lt $windowMin) { $inWindow++ }
+        }
+        if ($inWindow -ge $maxSends) {
+            $last = $History[$History.Count - 1]
+            if (($Now - $last).TotalMinutes -lt $pauseMin) { $allowed = $false }
+        }
+    }
+    return [pscustomobject]@{ Allowed = [bool]$allowed; History = $History }
+}
+
 # --- Loop daemon (solo si no -NoDaemon) ---------------------------------------------
 
 if (-not $NoDaemon) {
@@ -468,6 +503,7 @@ if (-not $NoDaemon) {
     $offsets  = @{}
     $buffers  = @{}
     $history  = [System.Collections.Generic.List[datetime]]::new()
+    $threadHist = @{}   # breaker por hilo: uuid -> List[datetime] de envios
     $lastScan = Get-Date  # solo archivos tocados desde el arranque (no replay de historia vieja)
 
     # C1: todo rollout YA existente al arrancar se inicializa con offset = su
@@ -520,10 +556,27 @@ if (-not $NoDaemon) {
                             Write-Log ("MATCH code={0} file={1} -> autorespond" -f $code, $file.Name) $cfg
                             if ($cfg['delivery'] -eq 'queue') {
                                 $ids = Get-RolloutThreadIds $file.Name
+                                # breaker por hilo: un mismo thread en bucle estrecho
+                                # (bloqueo->continua->bloqueo) se pausa, no se spamea
+                                $tKey = if (@($ids).Count -gt 0) { @($ids)[0] } else { $file.Name }
+                                if (-not $threadHist.ContainsKey($tKey)) { $threadHist[$tKey] = [System.Collections.Generic.List[datetime]]::new() }
+                                $tdec = Test-ThreadAllowed (Get-Date) $threadHist[$tKey] $cfg
+                                $threadHist[$tKey] = $tdec.History
+                                if (-not $tdec.Allowed) {
+                                    Write-Log ("MATCH code={0} file={1} -> pausa por bucle del hilo {2}" -f $code, $file.Name, $tKey) $cfg
+                                    continue
+                                }
                                 $estado = Invoke-QueueDelivery $texto $code $ids $cfg
+                                if ($estado -eq 'SENT') { $threadHist[$tKey].Add((Get-Date)) }
                                 if ($estado -eq 'ERROR') {
-                                    Write-Log 'QUEUE agotado -> fallback sendkeys' $cfg
-                                    $estado = Invoke-Autorespond $texto $code $cfg
+                                    if ($cfg['sendkeys_fallback']) {
+                                        Write-Log 'QUEUE agotado -> fallback sendkeys (habilitado en config)' $cfg
+                                        $estado = Invoke-Autorespond $texto $code $cfg
+                                    }
+                                    else {
+                                        # sin fallback: NUNCA teclas a ventanas ajenas a la sesion
+                                        Write-Log 'QUEUE agotado -> sin fallback sendkeys (sendkeys_fallback=false)' $cfg
+                                    }
                                 }
                             }
                             else {
