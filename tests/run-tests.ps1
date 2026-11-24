@@ -91,6 +91,35 @@ $h4 = [System.Collections.Generic.List[datetime]]::new()
 1..9 | ForEach-Object { $h4.Add((Get-Date).AddSeconds(-$_)) }
 Assert (Test-ThreadAllowed (Get-Date) $h4 @{ per_thread_max = 0 }).Allowed 'T17d per_thread_max=0 -> desactivado'
 
+# T22 launcher de autostart: escrito en cada ensure con las rutas actuales
+# (los tests corren en TEMP -> la tarea de sesion NO se crea, solo el launcher)
+. (Join-Path $PSScriptRoot '..\scripts\ensure-daemon.ps1')
+$rr22 = Split-Path $PSScriptRoot -Parent
+$laDir = Join-Path $env:TEMP "t22-$(Get-Random)"; [void](New-Item -ItemType Directory -Force $laDir)
+$laCfg = Join-Path $laDir 'config.json'
+[System.IO.File]::WriteAllText($laCfg, (@{ sessions_dir = $laDir; dry_run = $true; log_file = (Join-Path $laDir 'l.log') } | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+$null = Invoke-EnsureDaemon $laDir $rr22 $wsPath
+Start-Sleep -Milliseconds 800
+$launcher = Join-Path $laDir 'autostart.ps1'
+Assert (Test-Path $launcher) 'T22a autostart.ps1 escrito junto al state'
+$lc = Get-Content $launcher -Raw
+Assert ($lc -match [regex]::Escape($wsPath)) 'T22b launcher apunta al watch.ps1 actual (se auto-repara tras updates)'
+Assert ($lc -match [regex]::Escape($laDir)) 'T22c launcher fija el DataDir'
+$st22 = Get-Content (Join-Path $laDir 'state.json') -Raw | ConvertFrom-Json
+Stop-Process -Id ([int]$st22.pid) -Force -ErrorAction SilentlyContinue
+try { Remove-Item $laDir -Recurse -Force -ErrorAction Stop } catch { }
+
+# T23 observabilidad: invocacion -File deja linea en ensure.log
+$t23dir = Join-Path $env:TEMP "t23-$(Get-Random)"; [void](New-Item -ItemType Directory -Force $t23dir)
+[System.IO.File]::WriteAllText((Join-Path $t23dir 'config.json'), (@{ sessions_dir = $t23dir; dry_run = $true; log_file = (Join-Path $t23dir 'l.log') } | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+$proc23 = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile','-File',(Resolve-Path (Join-Path $PSScriptRoot '..\scripts\ensure-daemon.ps1')).Path,'-DataDir',$t23dir,'-PluginRoot',$rr22) -PassThru -WindowStyle Hidden
+if (-not $proc23.WaitForExit(20000)) { Stop-Process -Id $proc23.Id -Force -ErrorAction SilentlyContinue }
+Assert ($proc23.HasExited -and $proc23.ExitCode -eq 0) 'T23a ensure -File exit 0 (sin colgar)'
+Assert (Test-Path (Join-Path $t23dir 'logs\ensure.log')) 'T23b ensure.log creado en cada invocacion'
+$st23 = Get-Content (Join-Path $t23dir 'state.json') -Raw | ConvertFrom-Json
+Stop-Process -Id ([int]$st23.pid) -Force -ErrorAction SilentlyContinue
+try { Remove-Item $t23dir -Recurse -Force -ErrorAction Stop } catch { }
+
 # T18 defaults post-incidente: sin fallback sendkeys, breaker activo
 Assert ($missing.sendkeys_fallback -eq $false) 'T18a sendkeys_fallback=false por defecto (nunca teclas a otra ventana)'
 Assert ($missing.per_thread_max -eq 3) 'T18b per_thread_max=3 por defecto'

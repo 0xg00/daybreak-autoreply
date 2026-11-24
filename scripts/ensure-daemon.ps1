@@ -12,7 +12,8 @@
 param(
     [string]$DataDir = $env:CLAUDE_PLUGIN_DATA,
     [string]$PluginRoot = $env:CLAUDE_PLUGIN_ROOT,
-    [string]$WatchScript = $(if ($PluginRoot) { Join-Path $PluginRoot 'scripts\watch.ps1' } else { $null })
+    [string]$WatchScript = $(if ($PluginRoot) { Join-Path $PluginRoot 'scripts\watch.ps1' } else { $null }),
+    [switch]$NoAutostartTask   # tests: no instalar/actualizar la tarea de inicio de sesion
 )
 
 function Initialize-PluginData {
@@ -100,6 +101,25 @@ function Invoke-EnsureDaemon {
         [System.IO.File]::WriteAllText($statePath,
             (@{ pid = $proc.Id; script = $WatchScript; started = (Get-Date -Format o) } | ConvertTo-Json),
             [System.Text.UTF8Encoding]::new($false))
+
+        # --- autostart a prueba de reboots -------------------------------------
+        # La tarea de inicio de sesion apunta a un launcher ESTABLE en PLUGIN_DATA
+        # (la cache del plugin cambia de version en cada update); este launcher se
+        # re-escribe en cada ensure con las rutas actuales -> se auto-repara solo.
+        try {
+            $launcher = Join-Path $DataDir 'autostart.ps1'
+            $launcherContent = @"
+`$env:CLAUDE_PLUGIN_ROOT = '$PluginRoot'
+`$env:CLAUDE_PLUGIN_DATA = '$DataDir'
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File '$PluginRoot\scripts\ensure-daemon.ps1'
+"@
+            [System.IO.File]::WriteAllText($launcher, $launcherContent, [System.Text.UTF8Encoding]::new($false))
+            if (-not $NoAutostartTask -and $DataDir -notmatch 'Temp\\') {
+                # rutas sin espacios (PROGRA~1 + plugin-data) -> sin infierno de comillas
+                $tr = "C:\PROGRA~1\POWERS~1\7\pwsh.exe -NoProfile -ExecutionPolicy Bypass -File $launcher"
+                [void](schtasks /create /f /tn 'DaybreakAutoreply' /tr $tr /sc onlogon 2>&1)
+            }
+        } catch { }
     }
     finally {
         if ($lock) { $lock.Dispose() }
@@ -109,7 +129,14 @@ function Invoke-EnsureDaemon {
 # --- main: solo cuando se invoca con -File (no al dot-sourcear en tests) -----
 if ($MyInvocation.InvocationName -ne '.') {
     try {
-        if ($DataDir) { $null = Invoke-EnsureDaemon -DataDir $DataDir -PluginRoot $PluginRoot -WatchScript $WatchScript }
+        # observabilidad: una linea por ejecucion responde "disparo el hook?" para siempre
+        if ($DataDir) {
+            try {
+                [void](New-Item -ItemType Directory -Force -Path (Join-Path $DataDir 'logs'))
+                Add-Content -LiteralPath (Join-Path $DataDir 'logs\ensure.log') -Value ("{0} ensure invocado (plugin_root={1})" -f (Get-Date -Format o), $PluginRoot) -Encoding utf8
+            } catch { }
+            $null = Invoke-EnsureDaemon -DataDir $DataDir -PluginRoot $PluginRoot -WatchScript $WatchScript
+        }
     } catch {
         # un hook jamas rompe el arranque de sesion
     }
