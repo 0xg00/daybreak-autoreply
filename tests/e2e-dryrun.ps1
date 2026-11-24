@@ -66,6 +66,7 @@ try {
         sessions_dir                = $sessions
         log_file                    = $log
         dry_run                     = $true
+        delivery                    = 'sendkeys'   # suite del motor legacy
         delay_s                     = 0
         require_terminal_foreground = $false
         foreground_wait_s           = 1

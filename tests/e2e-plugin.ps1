@@ -31,6 +31,7 @@ try {
         sessions_dir                = $sessions
         log_file                    = 'logs/watchdog.log'
         dry_run                     = $true
+        delivery                    = 'sendkeys'   # esta suite prueba el motor legacy end-to-end
         delay_s                     = 0
         require_terminal_foreground = $false
         cooldown_s                  = 60
